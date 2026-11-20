@@ -20,7 +20,7 @@ What the screen or component is for, who uses it, and any design, sketch or refe
 - Make it work at phone width and at desktop width, with no sideways scrolling.
 - Make it usable without a mouse and with a screen reader: real buttons and links, labels on inputs, visible focus, enough contrast, no meaning carried by colour alone.
 - Use realistic content, not filler text. Try the longest plausible name and number.
-- Run it and look at it if the project can be run. Check light and dark if the product has both.
+- Run it and look at it if the project can be run. Check light and dark if the product has both. Stop any server you started.
 
 ## Do not
 
@@ -30,5 +30,7 @@ What the screen or component is for, who uses it, and any design, sketch or refe
 - Describe how it looks if you could not see it rendered. Say that you could not.
 
 ## Hand back
+
+Your final message is all the caller receives, so put the whole report in it.
 
 What you built or changed, a line for each file. The states and widths you covered. Whether you saw it rendered, and how. Anything that still needs a design decision.

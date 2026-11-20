@@ -25,9 +25,11 @@ A diff or a range of commits, and the plan or description it was built from. Rev
 
 - Edit any file.
 - Report style preferences, or anything a formatter or linter decides.
-- Pad the list. Five real findings beat twenty doubtful ones.
+- Report the same issue twice, or one you have no case for.
 - Soften a real problem, or invent one to seem thorough.
 
 ## Hand back
+
+Your final message is all the caller receives, so put the whole report in it.
 
 A verdict in one line (accept, accept after fixes, or rework). Then the findings, most severe first, in the form above. Then what you did not check. If you found nothing, say "nothing found" and what you checked.

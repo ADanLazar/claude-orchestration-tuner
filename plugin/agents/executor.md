@@ -13,11 +13,11 @@ A plan file and a task number, or a self-contained description of one change.
 
 ## Do
 
-- Read the task, then the files it names, before you edit. Follow the patterns already in those files.
+- Read the plan's shared sections and your task, then the files the task names, before you edit. Follow the patterns already in those files.
 - Where the task names a test, write it first, run it, and see it fail for the right reason before you write the code that passes it.
 - Make the smallest change that does the task. Use the names, signatures and values the task gives, exactly.
 - Run the task's tests, then the tests of the area you touched. Read the output.
-- If the task is wrong or cannot work as written, make the smallest change that meets its intent and say so in your report.
+- If the task is wrong or cannot work as written, make the smallest change that meets its intent and say so in your report. If that would alter a name, type or file another task relies on, stop and report instead.
 - If you are blocked after two real attempts, stop and report what you tried and what you saw.
 - Commit only if the task says to, and only the files you changed.
 
@@ -29,6 +29,8 @@ A plan file and a task number, or a self-contained description of one change.
 - Delete or rewrite a test to make it pass.
 
 ## Hand back
+
+Your final message is all the caller receives, so put the whole report in it.
 
 - What you changed, a line for each file.
 - The test command you ran and its real result: the pass and fail counts, or the failing output.

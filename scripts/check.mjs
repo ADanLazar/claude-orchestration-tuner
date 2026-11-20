@@ -2,7 +2,8 @@
 // Checks that need the real files, which a mod's own tests cannot read:
 // the persona files against the shipped profile, and words that must not ship.
 // Run from anywhere: node scripts/check.mjs
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -18,8 +19,10 @@ const MAY_NAME_OWNER = new Set(
     p.split('/').join(sep),
   ),
 )
-const FORBIDDEN = /\bDan\b|omc|oh-my/i
-const SKIP_DIRS = new Set(['.git', '.superpowers', 'node_modules', 'types'])
+const FORBIDDEN = /\bDan\b|\bomc\b|oh-my-?claude/i
+const HEADER_KEYS = new Set(['name', 'description', 'model', 'effort', 'disallowedTools'])
+// Personas that report and must never edit.
+const READ_ONLY = new Set(['code-reviewer', 'security-reviewer'])
 
 function readJson(file) {
   try {
@@ -52,19 +55,18 @@ function readAgent(text) {
   return { keys, body: lines.slice(end + 1).join('\n').trim() }
 }
 
-function walk(dir, found = []) {
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name)
-    if (statSync(path).isDirectory()) {
-      if (!SKIP_DIRS.has(name)) {
-        walk(path, found)
-      }
-    } else {
-      found.push(path)
-    }
-  }
+/** Every file git would ship or could be asked to: tracked, or new and not ignored. */
+function shippable() {
+  const out = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+    cwd: root,
+    encoding: 'utf8',
+  })
 
-  return found
+  return out
+    .split('\0')
+    .filter(name => name !== '')
+    .map(name => join(root, name))
+    .filter(existsSync)
 }
 
 const profile = readJson(join(plugin, 'profiles', 'build.json'))
@@ -107,6 +109,14 @@ for (const name of files) {
       fault(file, `${field} is "${agent.keys[field]}", the shipped profile says "${level[field]}"`)
     }
   }
+  for (const key of Object.keys(agent.keys)) {
+    if (!HEADER_KEYS.has(key)) {
+      fault(file, `header key "${key}" is not one a persona file carries`)
+    }
+  }
+  if (READ_ONLY.has(role) && agent.keys.disallowedTools !== 'Write, Edit') {
+    fault(file, 'a reviewer must carry "disallowedTools: Write, Edit"')
+  }
   if (agent.body.length === 0) {
     fault(file, 'no prompt')
   } else if (agent.body.length > PROMPT_LIMIT) {
@@ -114,7 +124,7 @@ for (const name of files) {
   }
 }
 
-for (const file of walk(root)) {
+for (const file of shippable()) {
   if (MAY_NAME_OWNER.has(relative(root, file)) || /\.(png|jpg)$/.test(file)) {
     continue
   }

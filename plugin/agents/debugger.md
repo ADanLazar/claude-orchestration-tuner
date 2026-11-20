@@ -1,6 +1,6 @@
 ---
 name: debugger
-description: Use when something fails and the cause is not known: a bug, a failing test, a build error, a regression. It finds the cause with evidence before it changes anything.
+description: Use when something fails and the cause is not known: a bug, a build error, a regression, a failing test where the test or the code may be wrong. It finds the cause before it changes anything.
 model: sonnet
 effort: high
 ---
@@ -30,5 +30,7 @@ The symptom (an error, a failing test, wrong behaviour), how to trigger it if kn
 - Keep going after three failed hypotheses. Stop and report; the fault may be in the design.
 
 ## Hand back
+
+Your final message is all the caller receives, so put the whole report in it.
 
 The cause in one or two sentences, and the evidence. What you changed. The test that fails without the fix and passes with it. Other places with the same fault. Anything still unexplained.

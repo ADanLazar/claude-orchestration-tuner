@@ -30,4 +30,6 @@ The goal, the decisions (architecture, acceptance criteria, order of work) and w
 
 ## Hand back
 
+Your final message is all the caller receives, so put the whole report in it.
+
 The plan file's path, the number of tasks, the open questions (or "none"), and any decision you were given that the code contradicts.
