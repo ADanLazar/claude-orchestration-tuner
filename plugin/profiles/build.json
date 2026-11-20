@@ -1,0 +1,23 @@
+{
+  "name": "build",
+  "summary": "Builds with a team of role agents.",
+  "main": {"model": "fable", "effort": "high"},
+  "team": "when-split",
+  "roles": {
+    "planner": {"model": "opus", "effort": "high"},
+    "executor": {"model": "sonnet", "effort": "medium"},
+    "code-reviewer": {"model": "opus", "effort": "medium"},
+    "test-engineer": {"model": "sonnet", "effort": "medium"},
+    "writer": {"model": "haiku", "effort": "high"},
+    "debugger": {"model": "sonnet", "effort": "high"},
+    "security-reviewer": {"model": "opus", "effort": "medium"},
+    "designer": {"model": "sonnet", "effort": "medium"}
+  },
+  "escalation": true,
+  "start_higher": ["sign-in", "permissions", "payments", "data migrations"],
+  "agents": "fresh-per-task",
+  "review": "each-milestone",
+  "tests": "Tests: roughly one focused test per stated behaviour, and more only where a failure would lose data, money or access. Run the tests for the changed area after each change and the whole suite once before each milestone. Do not keep scratch checks as test files.",
+  "order": ["correct", "time", "tokens"],
+  "notes": ""
+}

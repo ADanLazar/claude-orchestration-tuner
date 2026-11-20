@@ -1,0 +1,87 @@
+{
+  "read_on": "2026-11-19",
+  "prices_as_of": "2026-11-03",
+  "base": "sonnet",
+  "prices_source": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort",
+  "caveats": [
+    "Official pages disagree on the default effort of Fable 5.2 and Sonnet 5.5: the API pages say high, Claude Code's model configuration page says medium. Tune always writes an effort, so no default applies to a role it manages.",
+    "Effort has no price of its own. A higher level uses more tokens at the model's price.",
+    "Anthropic gives no effort level for code review in particular; the note for a reviewer is the model's general guidance."
+  ],
+  "models": {
+    "fable": {
+      "id": "claude-fable-5-2",
+      "family": "fable-5-2",
+      "name": "Fable 5.2",
+      "input": 8.0,
+      "output": 40.0,
+      "note": "Built for demanding reasoning and long-horizon agentic work.",
+      "source": "https://platform.claude.com/docs/en/models/fable-5-2/overview"
+    },
+    "opus": {
+      "id": "claude-opus-5-5",
+      "family": "opus-5-5",
+      "name": "Opus 5.5",
+      "input": 4.0,
+      "output": 20.0,
+      "note": "Built for long-running agentic coding and knowledge work. Early testers reported stronger code review than Opus 5: more bugs caught, fewer false alarms.",
+      "source": "https://platform.claude.com/docs/en/models/opus-5-5/overview"
+    },
+    "sonnet": {
+      "id": "claude-sonnet-5-5",
+      "family": "sonnet-5-5",
+      "name": "Sonnet 5.5",
+      "input": 2.0,
+      "output": 10.0,
+      "note": "The best combination of speed and intelligence, built for everyday coding and agent work.",
+      "source": "https://platform.claude.com/docs/en/models/sonnet-5-5/overview"
+    },
+    "haiku": {
+      "id": "claude-haiku-5-5",
+      "family": "haiku-5-5",
+      "name": "Haiku 5.5",
+      "input": 0.1,
+      "output": 0.5,
+      "note": "For high-volume, latency-sensitive tasks, including subagent tasks. A prompt over 100,000 tokens pays five times these prices.",
+      "source": "https://platform.claude.com/docs/en/models/haiku-5-5/overview"
+    }
+  },
+  "effort": {
+    "general": {
+      "low": "Most efficient: large token savings with some loss of capability. Suits simpler tasks that need speed and low cost.",
+      "medium": "Balanced, with moderate token savings. Suits agentic tasks that weigh speed, cost and performance.",
+      "high": "Spends as many tokens as the task needs. Suits complex reasoning, difficult coding and agentic tasks.",
+      "xhigh": "Extended capability for long-horizon work: long-running agentic and coding tasks with token budgets in the millions.",
+      "max": "Maximum capability with no limit on token spending. For tasks that need the deepest reasoning."
+    },
+    "fable": {
+      "source": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-2",
+      "low": "Suits quick back-and-forth, well-specified tasks and high-volume workloads.",
+      "medium": "Suits interactive coding, chat and everyday knowledge work.",
+      "high": "Suits hard coding, research, agentic work and long unattended runs. Most of the gain in capability is already present at high.",
+      "xhigh": "For the hardest long-running coding and agentic work, where you have measured a gain.",
+      "max": "For measuring the model's ceiling, or the rare task where time and tokens don't matter."
+    },
+    "opus": {
+      "source": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5",
+      "low": "On several coding evaluations low comes close to Opus 5 at high, at much lower cost.",
+      "medium": "The starting point. At medium it matches or exceeds Opus 5 at high on coding and knowledge-work evaluations.",
+      "xhigh": "Reserve for work where you have measured a quality gain.",
+      "max": "Reserve for work where you have measured a quality gain."
+    },
+    "sonnet": {
+      "source": "https://platform.claude.com/docs/en/build-with-claude/effort",
+      "medium": "The starting point for agentic coding and multistep tool use on well-specified tasks.",
+      "high": "For harder or longer agentic tasks; the step up from medium.",
+      "xhigh": "Use only where your evaluations show a quality gain.",
+      "max": "Use only where your evaluations show a quality gain."
+    },
+    "haiku": {
+      "source": "https://platform.claude.com/docs/en/build-with-claude/effort",
+      "low": "Cheapest and fastest: for chat, short tool tasks and simple high-volume requests. In long agent prompts it is more likely to skip a search, stop early or skip a check.",
+      "medium": "The starting point for most work, including agentic coding.",
+      "high": "For knowledge work, longer agent tasks and strict instruction following."
+    }
+  }
+}

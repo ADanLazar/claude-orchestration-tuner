@@ -1,0 +1,11 @@
+{
+  "name": "claude-orchestration-tuner",
+  "owner": { "name": "Dan Lazar" },
+  "plugins": [
+    {
+      "name": "tune",
+      "source": "./plugin",
+      "description": "Role agents at chosen model and effort levels, with a panel to tune them."
+    }
+  ]
+}
