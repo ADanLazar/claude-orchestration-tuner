@@ -1,7 +1,7 @@
 // `/tune` with words: each command reads or changes profiles and answers in text.
 import { render } from './brief'
 import type { Level, Profile } from './profile'
-import { change, create, get, kind, load, names, remove, reset, use } from './store'
+import { cannotRemove, change, create, get, has, kind, load, names, remove, reset, use } from './store'
 import type { Io, World } from './store'
 
 export const HELP = [
@@ -40,11 +40,13 @@ function list(world: World): string {
   const lines = names(world).map(name => {
     const mark = name === world.inForce ? '* ' : '  '
     const what = kind(world, name)
+    // A changed copy that cannot be read: the shipped values are what is in force.
+    const unread = has(world.broken, name) ? `, cannot be read: ${world.broken[name]}` : ''
 
-    return `${mark}${name}${what === 'own' ? '' : `  (${what})`}`
+    return `${mark}${name}${what === 'own' ? '' : `  (${what}${unread})`}`
   })
   for (const [name, why] of Object.entries(world.broken)) {
-    if (!(name in world.shipped)) {
+    if (!has(world.shipped, name)) {
       lines.push(`  ${name}  (cannot be read: ${why})`)
     }
   }
@@ -136,9 +138,12 @@ async function set(io: Io, world: World, rest: string[]): Promise<Answer> {
   }
   let target = world.inForce
   let words = rest
-  // "... in <name>" at the end names another profile, except after a dial that takes free text.
-  if (!TEXT_DIALS.has(rest[0] as string) && rest.length >= 4 && rest[rest.length - 2] === 'in') {
-    target = rest[rest.length - 1] as string
+  // "... in <name>" at the end names another profile, when there is one of that name;
+  // otherwise it is part of the value. A dial that takes free text never reads it so.
+  const last = rest[rest.length - 1] as string
+  const named = has(world.own, last) || has(world.shipped, last) || has(world.broken, last)
+  if (!TEXT_DIALS.has(rest[0] as string) && rest.length >= 4 && rest[rest.length - 2] === 'in' && named) {
+    target = last
     words = rest.slice(0, -2)
   }
   const profile = get(world, target)
@@ -146,13 +151,14 @@ async function set(io: Io, world: World, rest: string[]): Promise<Answer> {
   let path = words[0] as string
   let value = words.slice(1).join(' ')
   let said = path
-  // "executor effort high" is the short way to write "roles.executor.effort high".
-  if (path in profile.roles && (words[1] === 'model' || words[1] === 'effort')) {
+  // "executor effort high" is the short way to write "roles.executor.effort high"; "main" likewise.
+  const isRole = has(profile.roles, path)
+  if ((isRole || path === 'main') && (words[1] === 'model' || words[1] === 'effort')) {
     if (words.length < 3) {
       throw new Usage('set needs a dial and a value')
     }
     said = `${path} ${words[1]}`
-    path = `roles.${path}.${words[1]}`
+    path = isRole ? `roles.${path}.${words[1]}` : `main.${words[1]}`
     value = words.slice(2).join(' ')
   }
 
@@ -221,11 +227,9 @@ async function act(io: Io, words: string[]): Promise<Answer> {
       }
       const name = one('a profile name')
       // Say what is wrong now, not after the person has confirmed.
-      if (name in world.shipped) {
-        await remove(io, name)
-      }
-      if (!(name in world.own) && !(name in world.broken)) {
-        get(world, name)
+      const refusal = cannotRemove(world, name)
+      if (refusal !== null) {
+        throw new Error(refusal)
       }
 
       return { text: `To delete ${name}, repeat the command as: delete ${name} yes`, changed: false }

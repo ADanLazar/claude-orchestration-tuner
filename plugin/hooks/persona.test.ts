@@ -51,3 +51,9 @@ test('a file without a header, a closing line, a name, a description or a prompt
   expect(failure(() => parsePersona(FILE.replace(/description: .*\n/, '')))).toBe('the header has no description')
   expect(failure(() => parsePersona('---\nname: x\ndescription: y\nmodel: opus\neffort: low\n---\n\n  \n'))).toBe('there is no prompt after the header')
 })
+
+test('a byte-order mark and spaces after the --- lines are ignored', () => {
+  const odd = `\uFEFF${FILE.replace('---\nname', '--- \nname').replace('blue\n---\n', 'blue\n---  \n')}`
+
+  expect(parsePersona(odd)).toEqual(parsePersona(FILE))
+})

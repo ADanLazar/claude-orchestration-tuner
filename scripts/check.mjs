@@ -5,7 +5,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const plugin = join(root, 'plugin')
@@ -132,6 +132,37 @@ for (const file of shippable()) {
   if (hit) {
     fault(file, `holds "${hit[0]}", which must not ship`)
   }
+}
+
+// The mod's own code against the real files. Its modules are TypeScript with
+// only types to strip, which Node 23.6 and later load as they are.
+try {
+  const hooks = join(plugin, 'hooks')
+  const { validate } = await import(pathToFileURL(join(hooks, 'profile.ts')).href)
+  const { render, MAX_CHARS } = await import(pathToFileURL(join(hooks, 'brief.ts')).href)
+  const { parsePersona } = await import(pathToFileURL(join(hooks, 'persona.ts')).href)
+  const { BUILD } = await import(pathToFileURL(join(hooks, 'kit.ts')).href)
+  const shippedFile = join(plugin, 'profiles', 'build.json')
+  try {
+    const checked = validate(profile)
+    if (JSON.stringify(checked) !== JSON.stringify(BUILD)) {
+      fault(shippedFile, 'differs from BUILD in hooks/kit.ts, which the tests use as the shipped profile')
+    }
+    if (render(checked).length > MAX_CHARS) {
+      fault(shippedFile, 'its rules are longer than the limit')
+    }
+  } catch (error) {
+    fault(shippedFile, `the mod refuses it (${error.message})`)
+  }
+  for (const name of files) {
+    try {
+      parsePersona(readFileSync(join(agentsDir, name), 'utf8'))
+    } catch (error) {
+      fault(join(agentsDir, name), `the mod cannot read it (${error.message})`)
+    }
+  }
+} catch (error) {
+  fault(join(plugin, 'hooks'), `the mod's modules could not be loaded; this check needs Node 23.6 or later (${error.message})`)
 }
 
 if (faults.length > 0) {

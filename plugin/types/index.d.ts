@@ -22,7 +22,7 @@ export type World = {
   filled: Record<string, string[]>
   broken: Record<string, string>
   inForce: string
-  stamp: number
+  stamp: string
   storeError: string | null
   note: string | null
 }
@@ -33,8 +33,8 @@ export type View = {
   world: World | null
   /** The rules of the profile in force, or '' when there are none to give. */
   brief: string
-  /** The store's change counter when this was applied. */
-  applied: number
+  /** The store's stamp when this was applied; '' before any write. */
+  applied: string
   /** Personas that could not be read or registered. */
   problems: string[]
 }

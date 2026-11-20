@@ -1,10 +1,10 @@
 import { expect, test } from 'claude-code/testing'
 
-import { BUILD, copy, fake, latest, mainRanAt, makeIo, PANE, START, words } from './kit'
+import { BUILD, copy, fake, latest, mainRanAt, makeIo, ownIn, PANE, START, words } from './kit'
 
 const FAST = { ...copy(BUILD), name: 'fast' }
 const has = async (ui: any, type: string, key: string): Promise<boolean> => (await ui.find({ type, key })) !== undefined
-const stored = (world: any): Record<string, any> => (world.store.profiles ?? {}) as Record<string, any>
+const stored = ownIn
 
 test('the panel draws on every surface', async ($, on) => {
   fake(on, makeIo())
@@ -257,5 +257,18 @@ test('the panel says so when nothing could be loaded', async ($, on) => {
 
   expect(await words(ui)).toMatch(/the shipped profile could not be read/)
   expect(await has(ui, 'Select', 'effort:executor')).toBe(false)
+  await ui.unmount()
+})
+
+test('a changed copy of the shipped profile that cannot be read is shown, with reset', async ($, on) => {
+  const world = makeIo({ profiles: { build: { ...copy(BUILD), team: 'sometimes' } } })
+  fake(on, world)
+  await $.session.start(START)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect(await words(ui)).toMatch(/your changed build cannot be read; its shipped values are in force/)
+  await ui.press({ key: 'reset' })
+  expect('build' in ownIn(world)).toBe(false)
+  expect((await words(ui)).includes('cannot be read')).toBe(false)
   await ui.unmount()
 })

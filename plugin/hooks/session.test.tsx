@@ -60,8 +60,8 @@ test('a change made elsewhere is applied at the next prompt and handed to the co
   const changed = copy(BUILD)
   changed.roles.executor = { model: 'opus', effort: 'high' }
   changed.review = 'each-task'
-  world.store.profiles = { build: changed }
-  world.store.stamp = 1
+  world.store['profile:build'] = changed
+  world.store.stamp = 'elsewhere-1'
   const sent = await $.prompt.submit({ text: 'next' } as any)
 
   expect(latest(world, 'executor')!.model).toBe('opus')
@@ -87,13 +87,13 @@ test('a prompt with nothing changed re-registers nothing and carries nothing', a
 test('the profile in force deleted elsewhere falls back to build at the next prompt', async ($, on) => {
   const fast = { ...copy(BUILD), name: 'fast' }
   fast.roles.executor = { model: 'haiku', effort: 'low' }
-  const world = makeIo({ profiles: { fast }, inForce: 'fast', stamp: 3 })
+  const world = makeIo({ profiles: { fast }, inForce: 'fast', stamp: 's3' })
   fake(on, world)
   await $.session.start(START)
   expect(latest(world, 'executor')!.model).toBe('haiku')
 
-  world.store.profiles = {}
-  world.store.stamp = 4
+  delete world.store['profile:fast']
+  world.store.stamp = 's4'
   const sent = await $.prompt.submit({ text: 'go' } as any)
 
   expect(sent.text).toBe('go')
@@ -117,7 +117,7 @@ test('a slash command is passed on untouched', async ($, on) => {
   const world = makeIo()
   fake(on, world)
   await $.session.start(START)
-  world.store.stamp = 9
+  world.store.stamp = 's9'
   const sent = await $.prompt.submit({ text: '/help', command: { name: 'help' } } as any)
 
   expect(sent.context ?? []).toEqual([])
@@ -149,6 +149,44 @@ test('/tune with a refused command changes nothing', async ($, on) => {
 
   expect(answer.text).toBe("tune: no profile named 'nothing'")
   expect(world.registered.length).toBe(8)
+})
+
+test('rules changed and changed back are handed over each time', async ($, on) => {
+  const world = makeIo()
+  fake(on, world)
+  await $.session.start(START)
+
+  const there = await $.command.run({ command: 'tune', args: 'set review each-task' } as any)
+  expect(there.context?.[0]).toContain('Review after each task.')
+  const back = await $.command.run({ command: 'tune', args: 'set review each-milestone' } as any)
+  expect(back.context?.[0]).toContain('Review at each milestone')
+})
+
+test('a session whose store fails from the start still has the shipped rules and levels', async ($, on) => {
+  const world = makeIo({ profiles: { fast: { ...copy(BUILD), name: 'fast' } }, inForce: 'fast' })
+  world.failStore = true
+  fake(on, world)
+  await $.session.start(START)
+  const { sections } = await $.prompt.compose(COMPOSE as any)
+  const sent = await $.prompt.submit({ text: 'go' } as any)
+
+  expect(world.registered.length).toBe(8)
+  expect(sections[sections.length - 1]!.text).toContain('Tune profile: build.')
+  expect(sent.text).toBe('go')
+})
+
+test('a persona that fails on a later refresh is said once, not at every prompt', async ($, on) => {
+  const world = makeIo()
+  fake(on, world)
+  await $.session.start(START)
+  world.failRegister.add('designer')
+  world.store.stamp = 'elsewhere-1'
+  await $.prompt.submit({ text: 'one' } as any)
+  world.store.stamp = 'elsewhere-2'
+  await $.prompt.submit({ text: 'two' } as any)
+
+  expect(world.toasts.length).toBe(1)
+  expect(world.toasts[0]).toMatch(/^tune: designer: could not be registered/)
 })
 
 test('turn.step passes the request through', async ($, on) => {

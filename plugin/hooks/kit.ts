@@ -63,10 +63,12 @@ export type FakeIo = {
     root: string
     get: (key: string) => Promise<unknown>
     set: (key: string, value: unknown) => Promise<void>
+    keys: () => Promise<string[]>
+    drop: (key: string) => Promise<void>
     read: (path: string) => Promise<string>
     register: (spec: Record<string, unknown>) => Promise<unknown>
   }
-  /** What the store holds. */
+  /** What the store holds, by key: `profile:<name>`, `inForce`, `stamp`, `format`. */
   store: Record<string, unknown>
   /** What the plugin folder holds, by path. */
   files: Record<string, string>
@@ -88,10 +90,23 @@ export type FakeIo = {
   requests: number
 }
 
-/** The plugin's folder and store, in memory. */
+/**
+ * The plugin's folder and store, in memory. A seed names own profiles under
+ * `profiles` for brevity; they are stored one to a key, as the mod stores them.
+ */
 export function makeIo(seed: Record<string, unknown> = {}): FakeIo {
+  const store: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(copy(seed))) {
+    if (key === 'profiles') {
+      for (const [name, profile] of Object.entries(value as Record<string, unknown>)) {
+        store[`profile:${name}`] = profile
+      }
+    } else {
+      store[key] = value
+    }
+  }
   const fake: FakeIo = {
-    store: copy(seed),
+    store,
     files: {
       [`${ROOT}/profiles/build.json`]: JSON.stringify(BUILD),
       [`${ROOT}/notes.json`]: JSON.stringify(NOTES),
@@ -120,6 +135,20 @@ export function makeIo(seed: Record<string, unknown> = {}): FakeIo {
         }
         fake.writes += 1
         fake.store[key] = copy(value)
+      },
+      keys: async () => {
+        if (fake.failStore) {
+          throw new Error('the store is not there')
+        }
+
+        return Object.keys(fake.store)
+      },
+      drop: async key => {
+        if (fake.failStore) {
+          throw new Error('the store is not there')
+        }
+        fake.writes += 1
+        delete fake.store[key]
       },
       read: async path => {
         const text = fake.files[path]
@@ -199,6 +228,8 @@ export function fake(on: any, world: FakeIo): void {
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude.', scope: 'shared' }] }))
   on('store.get', (_: unknown, e: any) => answer(world.io.get(e.key)))
   on('store.set', (_: unknown, e: any) => answer(world.io.set(e.key, e.value)))
+  on('store.keys', () => answer(world.io.keys()))
+  on('store.delete', (_: unknown, e: any) => answer(world.io.drop(e.key)))
   on('fs.read', (_: unknown, e: any) => answer(world.io.read(local(String(e.path)))))
   on('agent.register', (_: unknown, e: any) => answer(world.io.register(e)))
   // The model: answers every request with the effort it was asked at.
@@ -260,4 +291,16 @@ export async function mainRanAt($: any, model: string, effort: string): Promise<
   }
 
   return pieces
+}
+
+/** The own profiles a store holds, by name. */
+export function ownIn(world: FakeIo): Record<string, any> {
+  const found: Record<string, any> = {}
+  for (const [key, value] of Object.entries(world.store)) {
+    if (key.startsWith('profile:')) {
+      found[key.slice('profile:'.length)] = value
+    }
+  }
+
+  return found
 }

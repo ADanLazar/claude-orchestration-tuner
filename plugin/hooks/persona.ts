@@ -21,12 +21,16 @@ const list = (value: string): string[] =>
     .filter(item => item !== '')
 
 export function parsePersona(text: string): Persona {
-  // A checkout on Windows may hold \r\n.
-  const lines = text.replace(/\r\n/g, '\n').split('\n')
-  if (lines[0] !== '---') {
+  // A checkout on Windows may hold \r\n, and an editor there may add a byte-order mark.
+  const lines = text
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+  const isFence = (line: string | undefined): boolean => line !== undefined && line.trimEnd() === '---'
+  if (!isFence(lines[0])) {
     throw new PersonaError('the file does not start with a --- line')
   }
-  const end = lines.indexOf('---', 1)
+  const end = lines.findIndex((line, index) => index > 0 && isFence(line))
   if (end < 0) {
     throw new PersonaError('the header has no closing --- line')
   }

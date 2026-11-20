@@ -9,7 +9,7 @@ import { apply } from './apply'
 import { GUARD, render } from './brief'
 import { explain, run, show } from './commands'
 import { EFFORTS, MODELS } from './profile'
-import { change, create, get, keep, kind, load, names, remove, reset, use } from './store'
+import { change, create, get, has, keep, kind, load, names, remove, reset, use } from './store'
 import type { Io } from './store'
 
 const REPLACES =
@@ -17,7 +17,10 @@ const REPLACES =
 
 const PANE = 'tune'
 
-const EMPTY: View = { world: null, brief: '', applied: 0, problems: [] }
+const EMPTY: View = { world: null, brief: '', applied: '', problems: [] }
+
+// Problems already shown in a toast, so a later refresh does not repeat them.
+const told = new Set<string>()
 
 const view = atom({ plugin: 'tune', key: 'view' } as const, EMPTY, { shape: 'view-1' })
 const main = atom({ plugin: 'tune', key: 'main' } as const, null as Level | null, { shape: 'main-1' })
@@ -29,12 +32,8 @@ const why = atom({ plugin: 'tune', key: 'why' } as const, false)
 // The profile a delete is waiting to have confirmed by a second press.
 const confirm = atom({ plugin: 'tune', key: 'confirm' } as const, null as string | null)
 
-/** Words as a shell would split them, double quotes kept together. */
-function splitWords(text: string): string[] {
-  const found = text.match(/"[^"]*"|\S+/g) ?? []
-
-  return found.map(word => (word.startsWith('"') && word.endsWith('"') && word.length > 1 ? word.slice(1, -1) : word))
-}
+/** The words of a command. Nothing is quoted: a name has no spaces, and a note keeps its quotes. */
+const splitWords = (text: string): string[] => text.trim().split(/\s+/).filter(word => word !== '')
 
 const clip = (text: string, room: number): string =>
   text.length <= room ? text : `${text.slice(0, Math.max(1, room - 1))}…`
@@ -69,7 +68,12 @@ function inForce(now: View): Profile | null {
     return null
   }
 
-  return now.world.own[now.world.inForce] ?? now.world.shipped[now.world.inForce] ?? null
+  const { own, shipped, inForce: name } = now.world
+  if (has(own, name)) {
+    return own[name] ?? null
+  }
+
+  return has(shipped, name) ? (shipped[name] ?? null) : null
 }
 
 /** One line of at most `room` characters: what does not fit is dropped in steps, then cut. */
@@ -112,6 +116,8 @@ function ioOf($: any): Io {
     root: String($.plugin.root),
     get: key => $.store.get(key),
     set: (key, value) => $.store.set(key, value),
+    keys: () => $.store.keys(),
+    drop: key => $.store.delete(key),
     read: async path => String(await $.fs.read(path)),
     register: spec => $.agent.register(spec),
   }
@@ -132,6 +138,13 @@ async function refresh($: any): Promise<View> {
   }
   const now: View = { world, brief, applied: world.stamp, problems }
   await update($, view, () => now)
+  // Say each problem once, where a person will see it.
+  for (const problem of problems) {
+    if (!told.has(problem)) {
+      told.add(problem)
+      $.ui.toast(`tune: ${problem}`)
+    }
+  }
 
   return now
 }
@@ -169,17 +182,19 @@ async function act($: any, work: (io: Io) => Promise<unknown>): Promise<void> {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
+    told.clear()
     try {
       await $.command.register({
         name: 'tune',
         description: 'Show or change the Tune profile in force (model and effort per role agent)',
       })
+    } catch {
+      // Without the command the levels and the rules still apply.
+    }
+    try {
       const now = await refresh($)
       // The system prompt carries these rules from the first request on.
       await update($, seenBrief, () => now.brief)
-      for (const problem of now.problems) {
-        $.ui.toast(`tune: ${problem}`)
-      }
     } catch {
       // The session must start whatever happens to Tune.
     }
@@ -195,7 +210,7 @@ export const register: Register = on => {
     try {
       let now = await read($, view)
       const stamp = await $.store.get('stamp')
-      if (now.world === null || (typeof stamp === 'number' ? stamp : 0) !== now.applied) {
+      if (now.world === null || String(stamp ?? '') !== now.applied) {
         // Another session, or the panel, changed something since this one last looked.
         now = await refresh($)
       }
@@ -240,7 +255,12 @@ export const register: Register = on => {
       if (!answer.changed) {
         return { text: answer.text }
       }
-      const context = await handOver($, await refresh($))
+      let context: string | null = null
+      try {
+        context = await handOver($, await refresh($))
+      } catch {
+        // The change is saved; the next prompt applies it and hands the rules over.
+      }
 
       return context === null ? { text: answer.text } : { text: answer.text, context: [context] }
     } catch (error) {
@@ -386,7 +406,7 @@ export const register: Register = on => {
           />
         </Box>
         {Object.entries(world.broken)
-          .filter(([one]) => !(one in world.shipped))
+          .filter(([one]) => !has(world.shipped, one))
           .map(([one, cause]) => (
             <Box>
               <Text dimColor>

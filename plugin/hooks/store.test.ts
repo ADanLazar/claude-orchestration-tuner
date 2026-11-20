@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { BUILD, copy, makeIo } from './kit'
+import { BUILD, copy, makeIo, ownIn } from './kit'
 import { change, create, get, keep, kind, load, names, remove, reset, use } from './store'
 
 /** The message a promise rejects with, or '' when it resolves. */
@@ -36,26 +36,28 @@ test('create copies the profile in force under a new name', async () => {
   expect(get(world, 'fast')).toEqual(FAST)
   expect(kind(world, 'fast')).toBe('own')
   expect(world.inForce).toBe('build')
-  expect(world.stamp).toBe(1)
+  expect(world.stamp).not.toBe('')
+  expect(Object.keys(ownIn(fake))).toEqual(['fast'])
 })
 
 test('create refuses a name that exists or is malformed, and saves nothing', async () => {
-  const fake = makeIo({ profiles: { fast: FAST }, stamp: 4 })
+  const fake = makeIo({ profiles: { fast: FAST }, stamp: 's4' })
 
   expect(await refusal(create(fake.io, 'fast'))).toBe("there is already a profile named 'fast'")
   expect(await refusal(create(fake.io, 'build'))).toBe("there is already a profile named 'build'")
   expect(await refusal(create(fake.io, 'Fast'))).toMatch(/^'Fast': a name is lower-case letters/)
   expect(await refusal(create(fake.io, 'slow', 'nothing'))).toBe("no profile named 'nothing'")
   expect(fake.writes).toBe(0)
-  expect((await load(fake.io)).stamp).toBe(4)
+  expect((await load(fake.io)).stamp).toBe('s4')
 })
 
 test('change saves one dial of an own profile and raises the stamp', async () => {
-  const fake = makeIo({ profiles: { fast: FAST }, stamp: 4 })
+  const fake = makeIo({ profiles: { fast: FAST }, stamp: 's4' })
   const world = await change(fake.io, 'fast', 'roles.executor.effort', 'low')
 
   expect(get(world, 'fast').roles.executor!.effort).toBe('low')
-  expect(world.stamp).toBe(5)
+  expect(world.stamp).not.toBe('s4')
+  expect(world.stamp).not.toBe('')
   expect(world.shipped.build!.roles.executor!.effort).toBe('medium')
 })
 
@@ -107,7 +109,7 @@ test('use puts a profile in force', async () => {
   const world = await use(fake.io, 'fast')
 
   expect(world.inForce).toBe('fast')
-  expect(world.stamp).toBe(1)
+  expect(world.stamp).not.toBe('')
   expect(await refusal(use(fake.io, 'nothing'))).toBe("no profile named 'nothing'")
 })
 
@@ -118,16 +120,6 @@ test('a change that makes the brief too long is refused and nothing is saved', a
   expect(message).toContain('the limit is 3000')
   expect(fake.writes).toBe(0)
   expect(get(await load(fake.io), 'fast').notes).toBe('')
-})
-
-test('a store of the wrong shape leaves build in force and is not written over', async () => {
-  const wrong = makeIo({ profiles: 'x', inForce: 'fast' })
-  const world = await load(wrong.io)
-
-  expect(world.storeError).toBe('own profiles could not be read')
-  expect(world.inForce).toBe('build')
-  expect(await refusal(create(wrong.io, 'slow'))).toBe('own profiles could not be read; nothing was changed')
-  expect(wrong.store.profiles).toBe('x')
 })
 
 test('a stored choice that is not a name is ignored, and use replaces it', async () => {
@@ -176,7 +168,7 @@ test('an older own profile is filled, and keep saves it whole', async () => {
 
   const kept = await keep(fake.io, 'fast')
   expect(kept.filled.fast ?? []).toEqual([])
-  expect((fake.store.profiles as any).fast.roles.designer).toEqual({ model: 'sonnet', effort: 'medium' })
+  expect(ownIn(fake).fast.roles.designer).toEqual({ model: 'sonnet', effort: 'medium' })
 })
 
 test('the profile in force is gone', async () => {
@@ -194,4 +186,62 @@ test('the shipped profile cannot be read', async () => {
   expect(world.shipped).toEqual({})
   expect(world.storeError).toBe('the shipped profile could not be read')
   expect(names(world)).toEqual([])
+})
+
+test('a name every object has is not a profile', async () => {
+  const fake = makeIo({ profiles: { fast: FAST } })
+  for (const name of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+    expect(await refusal(use(fake.io, name))).toBe(`no profile named '${name}'`)
+    expect(await refusal(reset(fake.io, name))).toBe(`no profile named '${name}'`)
+    expect(await refusal(remove(fake.io, name))).toBe(`no profile named '${name}'`)
+    expect(await refusal(change(fake.io, name, 'team', 'always'))).toBe(`no profile named '${name}'`)
+  }
+  expect(fake.writes).toBe(0)
+
+  const stale = await load(makeIo({ inForce: 'constructor' }).io)
+  expect(stale.inForce).toBe('build')
+  expect(stale.note).toBe('constructor is gone; build is in force')
+})
+
+test('two changes made at the same moment both survive, and each has its own stamp', async () => {
+  const fake = makeIo()
+  const [first, second] = await Promise.all([create(fake.io, 'aa'), create(fake.io, 'bb')])
+  const world = await load(fake.io)
+
+  expect(names(world)).toEqual(['build', 'aa', 'bb'])
+  expect(first.stamp === second.stamp && first.stamp !== world.stamp).toBe(false)
+  expect(world.stamp).not.toBe('')
+})
+
+test('every write has a stamp no other write has', async () => {
+  const fake = makeIo()
+  const seen = new Set<string>()
+  for (const name of ['aa', 'bb', 'cc', 'dd']) {
+    seen.add((await create(fake.io, name)).stamp)
+  }
+
+  expect(seen.size).toBe(4)
+})
+
+test('an own profile whose rules no longer fit is broken, not put in force', async () => {
+  const long = { ...copy(FAST), notes: 'x'.repeat(3000) }
+  const fake = makeIo({ profiles: { fast: long }, inForce: 'fast' })
+  const world = await load(fake.io)
+
+  expect(world.broken.fast).toContain('the limit is 3000')
+  expect(world.inForce).toBe('build')
+  expect(await refusal(use(fake.io, 'fast'))).toMatch(/^'fast' cannot be read: /)
+})
+
+test('a changed copy of a shipped profile that cannot be read says so, and reset clears it', async () => {
+  const fake = makeIo({ profiles: { build: { ...copy(BUILD), team: 'sometimes' } } })
+  const world = await load(fake.io)
+
+  expect(world.broken.build).toContain('team')
+  expect(world.note).toBe('your changed build cannot be read; its shipped values are in force')
+  expect(get(world, 'build')).toEqual(BUILD)
+
+  const after = await reset(fake.io, 'build')
+  expect(after.broken).toEqual({})
+  expect(after.note).toBe(null)
 })

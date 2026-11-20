@@ -141,3 +141,39 @@ test('a store that cannot be read refuses a change in one line', async () => {
   expect((await run(fake.io, words('new fast'))).text).toBe('tune: own profiles could not be read; nothing was changed')
   expect((await run(fake.io, ['list'])).text).toMatch(/^\* build/m)
 })
+
+test('"in <word>" names another profile only when there is one of that name', async () => {
+  const fake = makeIo({ profiles: { prod: { ...copy(BUILD), name: 'prod' } } })
+  await run(fake.io, words('set start_higher sign-in, logs in staging'))
+  expect(get(await load(fake.io), 'build').start_higher).toEqual(['sign-in', 'logs in staging'])
+
+  await run(fake.io, words('set executor effort high in prod'))
+  const world = await load(fake.io)
+  expect(get(world, 'prod').roles.executor!.effort).toBe('high')
+  expect(get(world, 'build').roles.executor!.effort).toBe('medium')
+})
+
+test('the main conversation takes the short form too, and quotes in a note are kept', async () => {
+  const fake = makeIo()
+  expect((await run(fake.io, words('set main effort medium'))).text).toMatch(/^build: main effort is now medium\./)
+  await run(fake.io, words('set notes Say "hi" first.'))
+  const build = get(await load(fake.io), 'build')
+
+  expect(build.main.effort).toBe('medium')
+  expect(build.notes).toBe('Say "hi" first.')
+})
+
+test('delete of a shipped profile is refused before anyone confirms', async () => {
+  const fake = makeIo()
+
+  expect((await run(fake.io, words('delete build'))).text).toBe('tune: build is a shipped profile and cannot be deleted')
+  expect((await run(fake.io, words('delete constructor'))).text).toBe("tune: no profile named 'constructor'")
+  expect(fake.writes).toBe(0)
+})
+
+test('list shows a changed shipped profile that cannot be read', async () => {
+  const fake = makeIo({ profiles: { build: { ...copy(BUILD), team: 'sometimes' } } })
+  const { text } = await run(fake.io, ['list'])
+
+  expect(text).toMatch(/^\* build  \(changed, cannot be read: team/m)
+})
