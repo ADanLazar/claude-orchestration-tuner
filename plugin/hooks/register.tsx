@@ -1,14 +1,15 @@
 // Tune's mod: applies the profile in force to the role agents, gives the
 // main conversation its working rules, answers /tune, and draws the row
-// above the prompt.
+// above the prompt and the panel.
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Level, Profile, View } from '../types'
 import { apply } from './apply'
 import { GUARD, render } from './brief'
-import { HELP, run } from './commands'
-import { get, load } from './store'
+import { explain, run, show } from './commands'
+import { EFFORTS, MODELS } from './profile'
+import { change, create, get, keep, kind, load, names, remove, reset, use } from './store'
 import type { Io } from './store'
 
 const REPLACES =
@@ -24,6 +25,9 @@ const main = atom({ plugin: 'tune', key: 'main' } as const, null as Level | null
 const seenBrief = atom({ plugin: 'tune', key: 'seenBrief' } as const, null as string | null)
 const message = atom({ plugin: 'tune', key: 'message' } as const, null as string | null)
 const tick = atom({ plugin: 'tune', key: 'tick' } as const, 0)
+const why = atom({ plugin: 'tune', key: 'why' } as const, false)
+// The profile a delete is waiting to have confirmed by a second press.
+const confirm = atom({ plugin: 'tune', key: 'confirm' } as const, null as string | null)
 
 /** Words as a shell would split them, double quotes kept together. */
 function splitWords(text: string): string[] {
@@ -35,6 +39,29 @@ function splitWords(text: string): string[] {
 const clip = (text: string, room: number): string =>
   text.length <= room ? text : `${text.slice(0, Math.max(1, room - 1))}…`
 const short = (effort: string): string => (effort === 'medium' ? 'med' : effort)
+const thousands = (tokens: number): string => `${Math.round(tokens / 1000)}K`
+const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+const ORDERS = [
+  ['correct', 'time', 'tokens'],
+  ['correct', 'tokens', 'time'],
+  ['time', 'correct', 'tokens'],
+  ['time', 'tokens', 'correct'],
+  ['tokens', 'correct', 'time'],
+  ['tokens', 'time', 'correct'],
+]
+
+/** "build-2" for build, then "build-3": the first such name nobody has. */
+function nextName(taken: string[], inForceNow: string): string {
+  const base = inForceNow.replace(/-\d+$/, '')
+  for (let n = 2; n < 100; n += 1) {
+    if (!taken.includes(`${base}-${n}`)) {
+      return `${base}-${n}`
+    }
+  }
+
+  return `${base}-copy`
+}
 
 /** The profile in force, or null when the session has none it can use. */
 function inForce(now: View): Profile | null {
@@ -45,10 +72,8 @@ function inForce(now: View): Profile | null {
   return now.world.own[now.world.inForce] ?? now.world.shipped[now.world.inForce] ?? null
 }
 
-/** The row is one line: what does not fit is dropped in steps, then cut. */
-export function rowText(now: View, mine: Level | null, columns: number): string {
-  // The button beside the text needs about ten columns; on a very narrow row the text takes what there is.
-  const room = Math.max(columns - 10, Math.min(columns, 16))
+/** One line of at most `room` characters: what does not fit is dropped in steps, then cut. */
+export function rowText(now: View, mine: Level | null, room: number): string {
   const profile = inForce(now)
   if (profile === null) {
     return clip('tune: not loaded', room)
@@ -125,6 +150,22 @@ async function handOver($: any, now: View): Promise<string | null> {
   return seen === null ? null : REPLACES + now.brief
 }
 
+/**
+ * One change asked for in the panel: does it, says what went wrong if it was
+ * refused, and applies the result. The rules reach the conversation with its next prompt.
+ */
+async function act($: any, work: (io: Io) => Promise<unknown>): Promise<void> {
+  let said: string | null = null
+  try {
+    await work(ioOf($))
+  } catch (error) {
+    said = `tune: ${reason(error)}`
+  }
+  await update($, message, () => said)
+  await update($, confirm, () => null)
+  await refresh($)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -189,7 +230,10 @@ export const register: Register = on => {
     try {
       const words = splitWords(e.args)
       if (words.length === 0) {
-        return { text: HELP }
+        await $.ui.open({ id: PANE, title: 'Tune', focus: true, columns: 50 })
+        const profile = inForce(await refresh($))
+
+        return { text: profile === null ? 'tune: no profile could be loaded' : show(profile) }
       }
       const answer = await run(ioOf($), words)
       await update($, message, () => answer.text)
@@ -227,7 +271,10 @@ export const register: Register = on => {
       return next(e)
     }
     const { Box, Button, Text } = $.ui.resolve(e)
-    const line = rowText(await read($, view), await read($, main), e.props.bodyColumns)
+    // The button beside the text needs about ten columns; on a very narrow row the text takes what there is.
+    const columns = e.props.bodyColumns
+    const room = Math.max(columns - 10, Math.min(columns, 16))
+    const line = rowText(await read($, view), await read($, main), room)
 
     return (
       <Box>
@@ -241,6 +288,250 @@ export const register: Register = on => {
             void $.ui.open({ id: PANE, title: 'Tune', focus: true, columns: 50 })
           }}
         />
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Button, Input, Select, Text } = $.ui.resolve(e)
+    const now = await read($, view)
+    const mine = await read($, main)
+    if (e.props.placement === 'widget') {
+      return <Text dimColor>{rowText(now, mine, e.props.bodyColumns)}</Text>
+    }
+    const said = await read($, message)
+    const showWhy = await read($, why)
+    const asking = await read($, confirm)
+    await read($, tick)
+
+    const world = now.world
+    const profile = inForce(now)
+    const lines = (text: string | null) => (text === null ? [] : text.split('\n')).map(line => <Text dimColor>{line}</Text>)
+    const command = (
+      <Input
+        key="command"
+        label="command"
+        placeholder="a tune command, for example: set notes Ask before adding a dependency"
+        onSubmit={async value => {
+          const answer = await run(ioOf($), splitWords(value))
+          await update($, message, () => answer.text)
+          await update($, confirm, () => null)
+          if (answer.changed) {
+            await refresh($)
+          }
+        }}
+      />
+    )
+    if (world === null || profile === null) {
+      return (
+        <Box flexDirection="column">
+          <Text>Tune has no profile it can use.</Text>
+          <Text dimColor>{world?.storeError ?? 'Nothing has been loaded yet.'}</Text>
+          <Text dimColor>The role agents still run at the levels in their own files.</Text>
+          <Button key="retry" label="try again" hotkey="r" onPress={() => act($, async () => undefined)} />
+        </Box>
+      )
+    }
+
+    const name = world.inForce
+    const what = kind(world, name)
+    const filled = world.filled[name] ?? []
+    const all = names(world)
+    const mismatch = mine !== null && mine.effort !== profile.main.effort
+    let running: any[] = []
+    try {
+      running = (await $.agent.list()).filter((agent: any) => agent.taskStatus === 'running')
+    } catch {
+      running = []
+    }
+    let reasons: ReturnType<typeof explain> | null = null
+    if (showWhy) {
+      try {
+        reasons = explain(profile, JSON.parse(String(await $.fs.read(`${$.plugin.root}/notes.json`))))
+      } catch {
+        reasons = { rows: [], caveats: ['The notes that explain the levels could not be read.'], sources: [] }
+      }
+    }
+    const set = (path: string) => (value: string) => act($, io => change(io, name, path, value))
+
+    return (
+      <Box flexDirection="column">
+        <Text dimColor>
+          Tune · {name} · in force on this machine{what === 'changed' ? ' · changed from the shipped profile' : ''}
+        </Text>
+        {world.note !== null && <Text dimColor>{world.note}</Text>}
+        {world.storeError !== null && <Text dimColor>{world.storeError}</Text>}
+        <Box>
+          {all.slice(0, 9).map((one, index) => (
+            <Button
+              key={`use:${one}`}
+              label={one}
+              hotkey={String(index + 1)}
+              variant={one === name ? 'primary' : 'secondary'}
+              onPress={() => act($, io => use(io, one))}
+            />
+          ))}
+          <Button
+            key="new"
+            label="+ new"
+            hotkey="n"
+            onPress={() =>
+              act($, async io => {
+                const fresh = await load(io)
+                const made = nextName([...names(fresh), ...Object.keys(fresh.broken)], fresh.inForce)
+                await create(io, made)
+                await use(io, made)
+              })
+            }
+          />
+        </Box>
+        {Object.entries(world.broken)
+          .filter(([one]) => !(one in world.shipped))
+          .map(([one, cause]) => (
+            <Box>
+              <Text dimColor>
+                {one} cannot be read: {cause}{' '}
+              </Text>
+              <Button key={`delete-broken:${one}`} label="delete it" onPress={() => act($, io => remove(io, one))} />
+            </Box>
+          ))}
+        <Text>
+          {profile.name}: {profile.summary}
+        </Text>
+        <Text dimColor>── levels ──</Text>
+        <Text>
+          {'you'.padEnd(19)}
+          {profile.main.model} / {profile.main.effort}
+          {mismatch ? `   (now: ${mine?.effort} - set with /effort ${profile.main.effort})` : ''}
+        </Text>
+        {Object.entries(profile.roles).map(([role, level]) => (
+          <Box>
+            <Text>
+              {role.padEnd(19)}
+              {filled.includes(`roles.${role}`) ? 'new ' : ''}
+            </Text>
+            <Select
+              key={`model:${role}`}
+              options={[...new Set([...MODELS, level.model])].map(value => ({ value }))}
+              value={level.model}
+              onSelect={set(`roles.${role}.model`)}
+            />
+            <Text> </Text>
+            <Select
+              key={`effort:${role}`}
+              options={EFFORTS.map(value => ({ value }))}
+              value={level.effort}
+              onSelect={set(`roles.${role}.effort`)}
+            />
+          </Box>
+        ))}
+        {filled.length > 0 && (
+          <Box>
+            <Text dimColor>An update added what is marked new, at the shipped values. </Text>
+            <Button key="keep" label="keep these" hotkey="k" onPress={() => act($, io => keep(io, name))} />
+          </Box>
+        )}
+        <Text dimColor>── rules ──</Text>
+        <Select
+          key="team"
+          label="team      "
+          options={[
+            { value: 'when-split', label: 'when the work splits' },
+            { value: 'always', label: 'always' },
+            { value: 'never', label: 'never' },
+          ]}
+          value={profile.team}
+          onSelect={set('team')}
+        />
+        <Select
+          key="agents"
+          label="agents    "
+          options={[
+            { value: 'fresh-per-task', label: 'a fresh agent per task' },
+            { value: 'may-continue', label: 'agents may continue' },
+          ]}
+          value={profile.agents}
+          onSelect={set('agents')}
+        />
+        <Select
+          key="review"
+          label="review    "
+          options={[
+            { value: 'each-milestone', label: 'each milestone' },
+            { value: 'each-task', label: 'each task' },
+          ]}
+          value={profile.review}
+          onSelect={set('review')}
+        />
+        <Select
+          key="escalation"
+          label="escalate  "
+          options={[{ value: 'on' }, { value: 'off' }]}
+          value={profile.escalation ? 'on' : 'off'}
+          onSelect={set('escalation')}
+        />
+        <Select
+          key="order"
+          label="order     "
+          options={ORDERS.map(order => ({ value: order.join(','), label: order.join(' > ') }))}
+          value={profile.order.join(',')}
+          onSelect={set('order')}
+        />
+        <Text dimColor>one level up for: {profile.start_higher.join(', ') || 'nothing'}</Text>
+        <Text dimColor>── running now ──</Text>
+        {running.length === 0 && <Text dimColor>no agents running</Text>}
+        {running.slice(0, 12).map((agent: any) => (
+          <Text>
+            {String(agent.type).replace(/^tune:/, '').padEnd(19)}
+            {String(agent.model ?? '?').replace('claude-', '')} / {agent.effort ?? '-'}
+            {typeof agent.tokenCount === 'number' ? `   ${thousands(agent.tokenCount)}` : ''}
+          </Text>
+        ))}
+        <Box>
+          <Button
+            key="why"
+            label={showWhy ? 'hide the reasons' : 'why these levels'}
+            hotkey="w"
+            onPress={async () => {
+              await update($, confirm, () => null)
+              await update($, why, shown => !shown)
+            }}
+          />
+          {what === 'changed' && (
+            <Button key="reset" label="reset to shipped" hotkey="r" onPress={() => act($, io => reset(io, name))} />
+          )}
+          {what === 'own' && (
+            <Button
+              key="delete"
+              label="delete"
+              hotkey="d"
+              onPress={async () => {
+                if ((await read($, confirm)) === name) {
+                  await act($, io => remove(io, name))
+
+                  return
+                }
+                await update($, message, () => null)
+                await update($, confirm, () => name)
+              }}
+            />
+          )}
+        </Box>
+        {asking === name && <Text>Delete {name}? Press delete again.</Text>}
+        {reasons !== null &&
+          reasons.rows.map(row => (
+            <Box flexDirection="column">
+              <Text>
+                {row.who}: {row.level}
+                {row.multiple === '?' ? '' : `, ${row.multiple} the price of Sonnet`}
+              </Text>
+              <Text dimColor>  {row.note}</Text>
+            </Box>
+          ))}
+        {reasons !== null && reasons.caveats.map(caveat => <Text dimColor>{caveat}</Text>)}
+        {reasons !== null && reasons.sources.map(source => <Text dimColor>  {source}</Text>)}
+        {command}
+        {lines(said)}
       </Box>
     )
   })
