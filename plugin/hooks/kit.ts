@@ -78,6 +78,10 @@ export type FakeIo = {
   /** When true, every store call rejects. */
   failStore: boolean
   writes: number
+  /** Every toast shown, when the engine stand-ins are in place. */
+  toasts: string[]
+  /** What `$.agent.list()` answers. */
+  agents: unknown[]
 }
 
 /** The plugin's folder and store, in memory. */
@@ -93,6 +97,8 @@ export function makeIo(seed: Record<string, unknown> = {}): FakeIo {
     failRegister: new Set(),
     failStore: false,
     writes: 0,
+    toasts: [],
+    agents: [],
     io: {
       root: ROOT,
       get: async key => {
@@ -149,3 +155,46 @@ export const NOTES = {
     sonnet: { source: 'https://example.test/effort', medium: 'The starting point for agentic coding.' },
   },
 }
+
+/**
+ * Stands for the engine beneath the mod's hooks: answers each call the mod
+ * makes on `$` from the same in-memory folder and store `makeIo` built.
+ */
+export function fake(on: any, world: FakeIo): void {
+  const answer = async (work: Promise<unknown>) => {
+    try {
+      return { value: await work }
+    } catch (error) {
+      // A refusal is how a stand-in makes the mod's call on `$` reject.
+      return { deny: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  // The mod reads under its real folder; the stand-in serves the same relative path.
+  const local = (path: string): string => {
+    const hit = Object.keys(world.files).find(key => path.endsWith(key.slice(ROOT.length)))
+
+    return hit ?? path
+  }
+
+  on('command.register', () => ({ value: { command: 'tune' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
+  on('agent.list', () => ({ value: world.agents }))
+  on('ui.toast', (_: unknown, e: any) => {
+    world.toasts.push(String(e.text ?? e))
+
+    return { value: undefined }
+  })
+  on('prompt.submit', (_: unknown, e: any) => ({ text: e.text, context: e.context }))
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude.', scope: 'shared' }] }))
+  on('store.get', (_: unknown, e: any) => answer(world.io.get(e.key)))
+  on('store.set', (_: unknown, e: any) => answer(world.io.set(e.key, e.value)))
+  on('fs.read', (_: unknown, e: any) => answer(world.io.read(local(String(e.path)))))
+  on('agent.register', (_: unknown, e: any) => answer(world.io.register(e)))
+}
+
+export const START = { cwd: '/', surface: 'terminal', isInteractive: true } as const
+
+/** The newest spec registered for one persona. */
+export const latest = (world: FakeIo, name: string): Record<string, any> | undefined =>
+  [...world.registered].reverse().find(spec => spec.name === name) as Record<string, any> | undefined
