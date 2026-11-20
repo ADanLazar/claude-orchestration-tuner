@@ -2,7 +2,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { GUARD, render } from './brief'
-import { BUILD, copy, fake, latest, makeIo, START } from './kit'
+import { BUILD, copy, fake, latest, mainRanAt, makeIo, START } from './kit'
 
 const COMPOSE = { model: 'claude-fable-5-2', promptModel: 'claude-fable-5-2', surfaces: [], tools: [], outputStyle: null, traits: [] }
 
@@ -154,27 +154,9 @@ test('/tune with a refused command changes nothing', async ($, on) => {
 test('turn.step passes the request through', async ($, on) => {
   const world = makeIo()
   fake(on, world)
-  let sent = 0
-  async function* model(_: unknown, e: any) {
-    sent += 1
-    yield { kind: 'text', index: 0, text: `ran at ${e.effort}` }
-
-    return { turnId: e.turnId, index: e.index, answer: `ran at ${e.effort}`, toolUses: [], stopReason: 'end_turn' }
-  }
-  on('turn.step', model as any)
   await $.session.start(START)
+  const pieces = await mainRanAt($, 'claude-fable-5-2', 'max')
 
-  const pieces: any[] = []
-  for await (const piece of $.turn.step({
-    turnId: 'turn-1',
-    index: 0,
-    model: 'claude-fable-5-2',
-    effort: 'max',
-    messageCount: 1,
-  } as any) as any) {
-    pieces.push(piece)
-  }
-
-  expect(sent).toBe(1)
+  expect(world.requests).toBe(1)
   expect(pieces.some(piece => piece.text === 'ran at max')).toBe(true)
 })

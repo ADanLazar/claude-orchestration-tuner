@@ -82,6 +82,10 @@ export type FakeIo = {
   toasts: string[]
   /** What `$.agent.list()` answers. */
   agents: unknown[]
+  /** The id of every pane the mod asked to open. */
+  opened: string[]
+  /** How many model requests reached the stand-in model. */
+  requests: number
 }
 
 /** The plugin's folder and store, in memory. */
@@ -99,6 +103,8 @@ export function makeIo(seed: Record<string, unknown> = {}): FakeIo {
     writes: 0,
     toasts: [],
     agents: [],
+    opened: [],
+    requests: 0,
     io: {
       root: ROOT,
       get: async key => {
@@ -177,7 +183,11 @@ export function fake(on: any, world: FakeIo): void {
   }
 
   on('command.register', () => ({ value: { command: 'tune' } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.open', (_: unknown, e: any) => {
+    world.opened.push(String(e.id))
+
+    return { value: { isPlaced: true } }
+  })
   on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
   on('agent.list', () => ({ value: world.agents }))
   on('ui.toast', (_: unknown, e: any) => {
@@ -191,6 +201,13 @@ export function fake(on: any, world: FakeIo): void {
   on('store.set', (_: unknown, e: any) => answer(world.io.set(e.key, e.value)))
   on('fs.read', (_: unknown, e: any) => answer(world.io.read(local(String(e.path)))))
   on('agent.register', (_: unknown, e: any) => answer(world.io.register(e)))
+  // The model: answers every request with the effort it was asked at.
+  on('turn.step', async function* (_: unknown, e: any) {
+    world.requests += 1
+    yield { kind: 'text', index: 0, text: `ran at ${e.effort}` }
+
+    return { turnId: e.turnId, index: e.index, answer: `ran at ${e.effort}`, toolUses: [], stopReason: 'end_turn' }
+  } as any)
 }
 
 export const START = { cwd: '/', surface: 'terminal', isInteractive: true } as const
@@ -198,3 +215,49 @@ export const START = { cwd: '/', surface: 'terminal', isInteractive: true } as c
 /** The newest spec registered for one persona. */
 export const latest = (world: FakeIo, name: string): Record<string, any> | undefined =>
   [...world.registered].reverse().find(spec => spec.name === name) as Record<string, any> | undefined
+
+export const ROW = {
+  plugin: 'tune',
+  component: 'AbovePrompt',
+  requestId: 'above-prompt',
+  props: {
+    hasSurvey: false,
+    isCollapsed: false,
+    isWorking: false,
+    maxRows: 6,
+    bodyColumns: 100,
+    scroll: { offset: 0, bodyRows: 6 },
+    view: {},
+  },
+} as const
+
+export const PANE = {
+  plugin: 'tune',
+  component: 'Pane',
+  requestId: 'tune',
+  props: {
+    title: 'Tune',
+    isFocused: true,
+    bodyColumns: 48,
+    placement: 'dock',
+    scroll: { offset: 0, bodyRows: 60 },
+    view: {},
+  },
+} as const
+
+/** The text of every Text element drawn, joined: enough to assert what a person reads. */
+export async function words(ui: any): Promise<string> {
+  const found = await ui.findAll({ type: 'Text' })
+
+  return found.map((one: any) => one.text).join('\n')
+}
+
+/** One model request by the main conversation at this level; resolves to the pieces streamed back. */
+export async function mainRanAt($: any, model: string, effort: string): Promise<any[]> {
+  const pieces: any[] = []
+  for await (const piece of $.turn.step({ turnId: 'turn-1', index: 0, model, effort, messageCount: 1 } as any) as any) {
+    pieces.push(piece)
+  }
+
+  return pieces
+}

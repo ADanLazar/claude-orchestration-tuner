@@ -1,9 +1,10 @@
 // Tune's mod: applies the profile in force to the role agents, gives the
-// main conversation its working rules, and answers /tune.
+// main conversation its working rules, answers /tune, and draws the row
+// above the prompt.
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Level, View } from '../types'
+import type { Level, Profile, View } from '../types'
 import { apply } from './apply'
 import { GUARD, render } from './brief'
 import { HELP, run } from './commands'
@@ -12,6 +13,8 @@ import type { Io } from './store'
 
 const REPLACES =
   'Tune: the profile in force changed. These rules replace the earlier Tune rules in this conversation.\n\n'
+
+const PANE = 'tune'
 
 const EMPTY: View = { world: null, brief: '', applied: 0, problems: [] }
 
@@ -27,6 +30,55 @@ function splitWords(text: string): string[] {
   const found = text.match(/"[^"]*"|\S+/g) ?? []
 
   return found.map(word => (word.startsWith('"') && word.endsWith('"') && word.length > 1 ? word.slice(1, -1) : word))
+}
+
+const clip = (text: string, room: number): string =>
+  text.length <= room ? text : `${text.slice(0, Math.max(1, room - 1))}…`
+const short = (effort: string): string => (effort === 'medium' ? 'med' : effort)
+
+/** The profile in force, or null when the session has none it can use. */
+function inForce(now: View): Profile | null {
+  if (now.world === null) {
+    return null
+  }
+
+  return now.world.own[now.world.inForce] ?? now.world.shipped[now.world.inForce] ?? null
+}
+
+/** The row is one line: what does not fit is dropped in steps, then cut. */
+export function rowText(now: View, mine: Level | null, columns: number): string {
+  // The button beside the text needs about ten columns; on a very narrow row the text takes what there is.
+  const room = Math.max(columns - 10, Math.min(columns, 16))
+  const profile = inForce(now)
+  if (profile === null) {
+    return clip('tune: not loaded', room)
+  }
+  const name = `tune: ${profile.name}`
+  const levels: string[] = []
+  const exec = profile.roles.executor
+  const review = profile.roles['code-reviewer']
+  if (exec) {
+    levels.push(`exec ${exec.model}/${short(exec.effort)}`)
+  }
+  if (review) {
+    levels.push(`review ${review.model}/${short(review.effort)}`)
+  }
+  // The main conversation runs at another effort than the profile recommends.
+  const marks = mine !== null && mine.effort !== profile.main.effort ? [`you ${mine.effort}!`] : []
+  const tries = [
+    [name, ...levels, ...marks],
+    [name, ...levels.slice(0, 1), ...marks],
+    [name, ...marks],
+    [name],
+  ]
+  for (const attempt of tries) {
+    const text = attempt.join(' · ')
+    if (text.length <= room) {
+      return text
+    }
+  }
+
+  return clip(name, room)
 }
 
 /** The engine calls store.ts and apply.ts need, taken from `$`. */
@@ -168,5 +220,28 @@ export const register: Register = on => {
     }
 
     return yield* next(e)
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) {
+      return next(e)
+    }
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const line = rowText(await read($, view), await read($, main), e.props.bodyColumns)
+
+    return (
+      <Box>
+        <Text dimColor>{line} </Text>
+        <Button
+          key="panel"
+          label="panel"
+          hotkey="t"
+          plain
+          onPress={() => {
+            void $.ui.open({ id: PANE, title: 'Tune', focus: true, columns: 50 })
+          }}
+        />
+      </Box>
+    )
   })
 }
