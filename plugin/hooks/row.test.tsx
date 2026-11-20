@@ -63,17 +63,22 @@ test('no profile could be loaded', async ($, on) => {
   await ui.unmount()
 })
 
-test('pressing panel opens the pane', async ($, on) => {
+test('pressing panel opens the panel, and pressing it again closes it', async ($, on) => {
   const world = makeIo()
   fake(on, world)
   await $.session.start(START)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...ROW, surface })
     await ui.press({ key: 'panel' })
+    expect(world.opened.length).toBe(world.closed.length + 1)
+    await ui.press({ key: 'panel' })
+    expect(world.closed.length).toBe(world.opened.length)
     await ui.unmount()
   }
 
   expect(world.opened).toEqual(['tune', 'tune'])
+  expect(world.closed).toEqual(['tune', 'tune'])
+  expect(world.openArgs[0]!.closeOnEscape).toBe(true)
 })
 
 test('a survey showing above the prompt is left alone', async ($, on) => {

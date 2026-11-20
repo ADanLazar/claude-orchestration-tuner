@@ -84,8 +84,11 @@ export type FakeIo = {
   toasts: string[]
   /** What `$.agent.list()` answers. */
   agents: unknown[]
-  /** The id of every pane the mod asked to open. */
+  /** The id of every pane the mod asked to open, and what it asked for each time. */
   opened: string[]
+  openArgs: Record<string, any>[]
+  /** The id of every pane the mod asked to close. */
+  closed: string[]
   /** How many model requests reached the stand-in model. */
   requests: number
 }
@@ -119,6 +122,8 @@ export function makeIo(seed: Record<string, unknown> = {}): FakeIo {
     toasts: [],
     agents: [],
     opened: [],
+    openArgs: [],
+    closed: [],
     requests: 0,
     io: {
       root: ROOT,
@@ -212,11 +217,24 @@ export function fake(on: any, world: FakeIo): void {
   }
 
   on('command.register', () => ({ value: { command: 'tune' } }))
+  // The panes that are up: opened and not closed since.
+  const up = new Set<string>()
   on('ui.open', (_: unknown, e: any) => {
     world.opened.push(String(e.id))
+    world.openArgs.push(e)
+    up.add(String(e.id))
 
     return { value: { isPlaced: true } }
   })
+  on('ui.close', (_: unknown, e: any) => {
+    world.closed.push(String(e.id))
+    up.delete(String(e.id))
+
+    return { value: undefined }
+  })
+  on('ui.panes', () => ({
+    value: [...up].map(id => ({ id, title: 'Tune', isShown: true, isFocused: true, isPlaced: true })),
+  }))
   on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
   on('agent.list', () => ({ value: world.agents }))
   on('ui.toast', (_: unknown, e: any) => {

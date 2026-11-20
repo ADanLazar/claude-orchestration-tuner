@@ -20,8 +20,8 @@ terminal.
   correct behaviour ahead of speed and cost.
 - **A row above the prompt** that shows the profile in use:
   `tune: build · exec sonnet/med · review opus/med`
-- **A panel** to change any of it: press `panel` on that row, or type
-  `/tune`.
+- **A panel** to change any of it, which you open when you want it and
+  close when you are done: type `/tune`.
 
 You do not have to do anything for the first two to apply.
 
@@ -44,6 +44,25 @@ A profile is a named set of levels and rules. Tune ships one, `build`:
 Tune sets the levels of the eight agents. It cannot set the level of the
 main conversation: it shows the recommended one, and tells you when you
 are running at another effort (`/effort high` sets it).
+
+## The panel
+
+Type `/tune` to open it. Close it with its `close` button, the `✕` in its
+corner, `/tune close`, or Esc while the panel has the keyboard. The row
+above the prompt has a `panel` button that does both.
+
+Where it appears depends on where you run Claude Code:
+
+- **Desktop app:** beside the conversation.
+- **Terminal, fullscreen layout:** at the side, in a window at least 110
+  columns wide. Click in it to use it.
+- **Terminal, classic layout** (the default): in a box above the prompt,
+  which takes the keyboard until you close it. Typing `/tui fullscreen`
+  switches the terminal to the layout that puts it at the side.
+
+Inside the panel, click, or move with Tab and the arrow keys and press
+Enter. No single key does anything by itself, so typing by mistake while
+the panel is open changes nothing.
 
 ## Changing things
 
@@ -70,6 +89,7 @@ field:
 | Command | Does |
 | -- | -- |
 | `/tune` | Opens the panel |
+| `/tune close` | Closes it |
 | `/tune list` | Your profiles; `*` marks the one in use |
 | `/tune show [name]` | One profile's settings |
 | `/tune use <name>` | Switches to a profile |

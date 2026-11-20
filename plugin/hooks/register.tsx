@@ -7,7 +7,7 @@ import type { Register } from 'claude-code'
 import type { Level, Profile, View } from '../types'
 import { apply } from './apply'
 import { GUARD, render } from './brief'
-import { explain, run, show } from './commands'
+import { explain, run } from './commands'
 import { EFFORTS, MODELS } from './profile'
 import { change, create, get, has, keep, kind, load, names, remove, reset, use } from './store'
 import type { Io } from './store'
@@ -163,10 +163,40 @@ async function handOver($: any, now: View): Promise<string | null> {
   return seen === null ? null : REPLACES + now.brief
 }
 
+// Enough rows for the whole panel where the terminal shows it above the prompt and not at the side.
+const INLINE_ROWS = 34
+
 /** Opens the panel as a person first sees it: nothing is waiting to be confirmed. */
 async function openPane($: any): Promise<void> {
   await update($, confirm, () => null)
-  await $.ui.open({ id: PANE, title: 'Tune', focus: true, columns: 50 })
+  await $.ui.open({ id: PANE, title: 'Tune', focus: true, closeOnEscape: true, columns: 50, rows: INLINE_ROWS })
+}
+
+/** Closes the panel. A delete nobody confirmed is forgotten with it. */
+async function closePane($: any): Promise<void> {
+  await update($, confirm, () => null)
+  await $.ui.close({ id: PANE })
+}
+
+async function isPaneOpen($: any): Promise<boolean> {
+  try {
+    return (await $.ui.panes()).some((pane: any) => pane.id === PANE)
+  } catch {
+    return false
+  }
+}
+
+/** What /tune answers once the panel is open: where it is, and how to close it. */
+function openedText(presentation: { isFullscreen?: boolean } | undefined): string {
+  const close = 'Close it with Esc, its close button, or /tune close.'
+  if (presentation?.isFullscreen === true) {
+    return `The Tune panel is open at the side. ${close}`
+  }
+  if (presentation?.isFullscreen === false) {
+    return `The Tune panel is open above the prompt. ${close} For a panel at the side, type /tui fullscreen.`
+  }
+
+  return `The Tune panel is open. ${close}`
 }
 
 /**
@@ -250,11 +280,16 @@ export const register: Register = on => {
   on('command.run', { command: 'tune' }, async ($, e) => {
     try {
       const words = splitWords(e.args)
-      if (words.length === 0) {
+      if (words.length === 0 || (words.length === 1 && words[0] === 'open')) {
         await openPane($)
-        const profile = inForce(await refresh($))
+        await refresh($)
 
-        return { text: profile === null ? 'tune: no profile could be loaded' : show(profile) }
+        return { text: openedText(e.presentation) }
+      }
+      if (words.length === 1 && words[0] === 'close') {
+        await closePane($)
+
+        return { text: 'The Tune panel is closed.' }
       }
       const answer = await run(ioOf($), words)
       await update($, message, () => answer.text)
@@ -310,13 +345,16 @@ export const register: Register = on => {
           label="panel"
           hotkey="t"
           plain
-          onPress={() => openPane($)}
+          onPress={async () => ((await isPaneOpen($)) ? closePane($) : openPane($))}
         />
       </Box>
     )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    // No button here has a one-key shortcut: the panel takes the keyboard when it opens, and a
+    // person who starts typing their next prompt must not create, switch or delete a profile.
+    // Tab and the arrows walk the buttons, Enter presses one, Esc closes the panel.
     const { Box, Button, Input, Select, Text } = $.ui.resolve(e)
     const now = await read($, view)
     const mine = await read($, main)
@@ -352,7 +390,10 @@ export const register: Register = on => {
           <Text>Tune has no profile it can use.</Text>
           <Text dimColor>{world?.storeError ?? 'Nothing has been loaded yet.'}</Text>
           <Text dimColor>The role agents still run at the levels in their own files.</Text>
-          <Button key="retry" label="try again" hotkey="r" onPress={() => act($, async () => undefined)} />
+          <Box>
+            <Button key="retry" label="try again" onPress={() => act($, async () => undefined)} />
+            <Button key="close" label="close" role="dismiss" onPress={() => closePane($)} />
+          </Box>
         </Box>
       )
     }
@@ -382,18 +423,23 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        <Text dimColor>
-          Tune · {name} · in force on this machine{what === 'changed' ? ' · changed from the shipped profile' : ''}
-        </Text>
+        <Box>
+          <Button key="close" label="close" role="dismiss" onPress={() => closePane($)} />
+          <Text dimColor>
+            {' '}
+            Tune · {name} · in force on this machine{what === 'changed' ? ' · changed from the shipped profile' : ''}
+          </Text>
+        </Box>
+        {e.surface === 'terminal' && e.props.placement === 'inline' && (
+          <Text dimColor>Shown above the prompt. For a panel at the side, type /tui fullscreen.</Text>
+        )}
         {world.note !== null && <Text dimColor>{world.note}</Text>}
         {world.storeError !== null && <Text dimColor>{world.storeError}</Text>}
         <Box>
-          {all.map((one, index) => (
+          {all.map(one => (
             <Button
               key={`use:${one}`}
               label={one}
-              // Nine digits to press; the rest are reached with the arrows or a click.
-              {...(index < 9 ? { hotkey: String(index + 1) } : {})}
               variant={one === name ? 'primary' : 'secondary'}
               onPress={() => act($, io => use(io, one))}
             />
@@ -401,7 +447,6 @@ export const register: Register = on => {
           <Button
             key="new"
             label="+ new"
-            hotkey="n"
             onPress={() =>
               act($, async io => {
                 const fresh = await load(io)
@@ -471,7 +516,7 @@ export const register: Register = on => {
         {filled.length > 0 && (
           <Box>
             <Text dimColor>An update added what is marked new, at the shipped values. </Text>
-            <Button key="keep" label="keep these" hotkey="k" onPress={() => act($, io => keep(io, name))} />
+            <Button key="keep" label="keep these" onPress={() => act($, io => keep(io, name))} />
           </Box>
         )}
         <Text dimColor>── rules ──</Text>
@@ -534,20 +579,18 @@ export const register: Register = on => {
           <Button
             key="why"
             label={showWhy ? 'hide the reasons' : 'why these levels'}
-            hotkey="w"
             onPress={async () => {
               await update($, confirm, () => null)
               await update($, why, shown => !shown)
             }}
           />
           {what === 'changed' && (
-            <Button key="reset" label="reset to shipped" hotkey="r" onPress={() => act($, io => reset(io, name))} />
+            <Button key="reset" label="reset to shipped" onPress={() => act($, io => reset(io, name))} />
           )}
           {what === 'own' && (
             <Button
               key="delete"
               label="delete"
-              hotkey="d"
               onPress={async () => {
                 if ((await read($, confirm)) === name) {
                   await act($, io => remove(io, name))

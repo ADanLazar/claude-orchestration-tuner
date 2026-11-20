@@ -5,7 +5,7 @@ import { cannotRemove, change, create, get, has, kind, load, names, remove, rese
 import type { Io, World } from './store'
 
 export const HELP = [
-  'Commands (after /tune, or in the panel\'s command field):',
+  'Commands (after /tune, or in the panel\'s command field). /tune alone opens the panel; /tune close closes it.',
   '  list                              profiles; * marks the one in force',
   '  show [name]                       one profile\'s dials',
   '  use <name>                        put a profile in force',

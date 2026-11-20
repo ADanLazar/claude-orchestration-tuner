@@ -232,14 +232,78 @@ test('the panel says when the main conversation runs at another effort, and what
   await ui.unmount()
 })
 
-test('/tune with no words opens the pane', async ($, on) => {
+test('/tune with no words opens the panel and says so in one line', async ($, on) => {
   const world = makeIo()
   fake(on, world)
   await $.session.start(START)
   const answer = await $.command.run({ command: 'tune', args: '' } as any)
 
   expect(world.opened).toEqual(['tune'])
-  expect(answer.text).toMatch(/^build: Builds with a team of role agents\./)
+  expect(world.openArgs[0]!.closeOnEscape).toBe(true)
+  expect(world.openArgs[0]!.focus).toBe(true)
+  const text = answer.text ?? ''
+  expect(text).toMatch(/^The Tune panel is open\./)
+  expect(text.includes('\n')).toBe(false)
+  expect(text).toContain('Esc')
+})
+
+test('/tune says where the panel is, by the layout of the terminal', async ($, on) => {
+  const world = makeIo()
+  fake(on, world)
+  await $.session.start(START)
+  const classic = await $.command.run({ command: 'tune', args: '', presentation: { isFullscreen: false, columns: 120 } } as any)
+  const full = await $.command.run({ command: 'tune', args: '', presentation: { isFullscreen: true, columns: 180 } } as any)
+
+  expect(classic.text).toContain('above the prompt')
+  expect(classic.text).toContain('/tui fullscreen')
+  expect(full.text).toContain('at the side')
+  expect((full.text ?? '').includes('/tui')).toBe(false)
+})
+
+test('the panel has a close button, on the terminal and the desktop app', async ($, on) => {
+  const world = makeIo({ profiles: { fast: FAST }, inForce: 'fast' })
+  fake(on, world)
+  await $.session.start(START)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    await $.command.run({ command: 'tune', args: '' } as any)
+    const ui = await $.ui.mount({ ...PANE, surface })
+    await ui.press({ key: 'delete' })
+    await ui.press({ key: 'close' })
+    await ui.unmount()
+  }
+
+  expect(world.closed).toEqual(['tune', 'tune'])
+  // Closing with a delete still unanswered does not leave it armed.
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await words(ui)).includes('Press delete again')).toBe(false)
+  await ui.unmount()
+})
+
+test('/tune close closes the panel', async ($, on) => {
+  const world = makeIo()
+  fake(on, world)
+  await $.session.start(START)
+  await $.command.run({ command: 'tune', args: '' } as any)
+  const answer = await $.command.run({ command: 'tune', args: 'close' } as any)
+
+  expect(world.closed).toEqual(['tune'])
+  expect(answer.text).toBe('The Tune panel is closed.')
+})
+
+test('shown above the prompt, the panel says how to have it at the side', async ($, on) => {
+  fake(on, makeIo())
+  await $.session.start(START)
+  const inline = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement: 'inline' }, surface: 'terminal' } as any)
+  expect(await words(inline)).toMatch(/\/tui fullscreen/)
+  await inline.unmount()
+
+  const docked = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await words(docked)).includes('/tui fullscreen')).toBe(false)
+  await docked.unmount()
+
+  const desktop = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement: 'inline' }, surface: 'desktop' } as any)
+  expect((await words(desktop)).includes('/tui fullscreen')).toBe(false)
+  await desktop.unmount()
 })
 
 test('the widget form is one line', async ($, on) => {
@@ -336,5 +400,21 @@ test('the delete question does not outlive the panel', async ($, on) => {
   expect((await words(ui)).includes('Press delete again')).toBe(false)
   await ui.press({ key: 'delete' })
   expect(stored(world).fast !== undefined).toBe(true)
+  await ui.unmount()
+})
+
+test('no letter or digit typed at the panel changes anything', async ($, on) => {
+  // The panel takes the keyboard when it opens: a shortcut on "+ new" or "delete"
+  // would fire for someone who simply started typing their next prompt.
+  const changed = copy(BUILD)
+  changed.roles.executor = { model: 'opus', effort: 'high' }
+  fake(on, makeIo({ profiles: { build: changed, fast: FAST }, inForce: 'fast' }))
+  await $.session.start(START)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const buttons: any[] = await ui.findAll({ type: 'Button' })
+  const withKeys = buttons.filter(button => button.props.hotkey !== undefined).map(button => button.key)
+
+  expect(buttons.length >= 5).toBe(true)
+  expect(withKeys).toEqual([])
   await ui.unmount()
 })
