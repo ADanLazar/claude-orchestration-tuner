@@ -245,3 +245,32 @@ test('a changed copy of a shipped profile that cannot be read says so, and reset
   expect(after.broken).toEqual({})
   expect(after.note).toBe(null)
 })
+
+test('a new profile cannot take a name every object answers to', async () => {
+  const fake = makeIo()
+
+  expect(await refusal(create(fake.io, 'constructor'))).toBe("'constructor' cannot be a profile's name")
+  expect(fake.writes).toBe(0)
+})
+
+test('the stamp is read before what it stands for', async () => {
+  // A writer sets the stamp last. A reader that took it last could hold older profiles under a newer stamp.
+  const fake = makeIo({ profiles: { fast: FAST }, stamp: 's1' })
+  const calls: string[] = []
+  const io = {
+    ...fake.io,
+    get: (key: string) => {
+      calls.push(`get ${key}`)
+
+      return fake.io.get(key)
+    },
+    keys: () => {
+      calls.push('keys')
+
+      return fake.io.keys()
+    },
+  }
+  await load(io)
+
+  expect(calls[0]).toBe('get stamp')
+})

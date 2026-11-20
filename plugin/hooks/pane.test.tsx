@@ -163,7 +163,7 @@ test('a filled profile shows new on the filled row and keep saves it', async ($,
   await ui.unmount()
 })
 
-test('a broken profile can be deleted from the panel', async ($, on) => {
+test('a broken profile can be deleted from the panel, on the second press', async ($, on) => {
   const world = makeIo({ profiles: { odd: null } })
   fake(on, world)
   await $.session.start(START)
@@ -171,6 +171,10 @@ test('a broken profile can be deleted from the panel', async ($, on) => {
 
   expect(await words(ui)).toMatch(/odd cannot be read/)
   expect(await has(ui, 'Button', 'use:odd')).toBe(false)
+  await ui.press({ key: 'delete-broken:odd' })
+  expect('odd' in stored(world)).toBe(true)
+  expect(await words(ui)).toMatch(/Delete odd\? Press delete it again\./)
+
   await ui.press({ key: 'delete-broken:odd' })
   expect('odd' in stored(world)).toBe(false)
   await ui.unmount()
@@ -270,5 +274,67 @@ test('a changed copy of the shipped profile that cannot be read is shown, with r
   await ui.press({ key: 'reset' })
   expect('build' in ownIn(world)).toBe(false)
   expect((await words(ui)).includes('cannot be read')).toBe(false)
+  await ui.unmount()
+})
+
+test('a profile whose name every object answers to draws like any other', async ($, on) => {
+  const odd = { ...copy(BUILD), name: 'constructor' }
+  fake(on, makeIo({ profiles: { constructor: odd }, inForce: 'constructor' }))
+  await $.session.start(START)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect(await words(ui)).toMatch(/Tune · constructor/)
+  expect(await has(ui, 'Select', 'effort:executor')).toBe(true)
+  expect(await has(ui, 'Button', 'keep')).toBe(false)
+  await ui.unmount()
+})
+
+test('every profile has a button, past the ninth too', async ($, on) => {
+  const profiles: Record<string, unknown> = {}
+  for (const letter of 'abcdefghij') {
+    profiles[`p-${letter}`] = { ...copy(BUILD), name: `p-${letter}` }
+  }
+  const world = makeIo({ profiles })
+  fake(on, world)
+  await $.session.start(START)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect(await has(ui, 'Button', 'use:p-j')).toBe(true)
+  await ui.press({ key: 'use:p-j' })
+  expect(world.store.inForce).toBe('p-j')
+  await ui.unmount()
+})
+
+test('choosing the value already shown changes nothing', async ($, on) => {
+  const world = makeIo()
+  fake(on, world)
+  await $.session.start(START)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.select({ key: 'effort:executor', value: 'medium' })
+  await ui.select({ key: 'model:writer', value: 'haiku' })
+  await ui.select({ key: 'team', value: 'when-split' })
+  await ui.select({ key: 'escalation', value: 'on' })
+  await ui.select({ key: 'order', value: 'correct,time,tokens' })
+
+  expect(stored(world).build).toBe(undefined)
+  expect(world.writes).toBe(0)
+  expect((await words(ui)).includes('changed from the shipped profile')).toBe(false)
+  await ui.unmount()
+})
+
+test('the delete question does not outlive the panel', async ($, on) => {
+  const world = makeIo({ profiles: { fast: FAST }, inForce: 'fast' })
+  fake(on, world)
+  await $.session.start(START)
+  let ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'delete' })
+  await ui.unmount()
+
+  // The person closes the panel and later opens it again.
+  await $.command.run({ command: 'tune', args: '' } as any)
+  ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await words(ui)).includes('Press delete again')).toBe(false)
+  await ui.press({ key: 'delete' })
+  expect(stored(world).fast !== undefined).toBe(true)
   await ui.unmount()
 })

@@ -88,14 +88,15 @@ async function read(io: Io): Promise<Read> {
   let chosen: unknown
   let reachable = true
   try {
+    // First, because a writer sets it last: a reader must never hold older profiles under a newer stamp.
+    const stamp = await io.get('stamp')
+    world.stamp = stamp === undefined || stamp === null ? '' : String(stamp)
     for (const key of await io.keys()) {
       if (key.startsWith(PREFIX)) {
         stored.push([key.slice(PREFIX.length), await io.get(key)])
       }
     }
     chosen = await io.get('inForce')
-    const stamp = await io.get('stamp')
-    world.stamp = stamp === undefined || stamp === null ? '' : String(stamp)
   } catch {
     world.storeError = UNREADABLE
     reachable = false
@@ -221,6 +222,10 @@ export async function create(io: Io, name: string, from?: string): Promise<World
   }
   if (exists(world, name)) {
     throw new ProfileError(`there is already a profile named '${name}'`)
+  }
+  // "constructor" is a well-formed name that every object already answers to.
+  if (name in {}) {
+    throw new ProfileError(`'${name}' cannot be a profile's name`)
   }
   const profile = validate({ ...get(world, from ?? world.inForce), name })
   render(profile)

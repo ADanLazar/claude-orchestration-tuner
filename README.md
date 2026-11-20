@@ -60,7 +60,9 @@ Open the panel. Everything in it applies to this computer at once.
   compared with Sonnet and what each effort level is for.
 
 The first time you change `build`, Tune saves the result as your own copy
-of it. Your copy stays as you left it when the plugin is updated.
+of it. Your copy stays as you left it when the plugin is updated. If an
+update ever cannot read one of your profiles, the panel says so and keeps
+it; nothing is deleted unless you delete it.
 
 The same things can be typed, after `/tune` or in the panel's command
 field:
@@ -73,7 +75,7 @@ field:
 | `/tune use <name>` | Switches to a profile |
 | `/tune new <name> [from <name>]` | Copies a profile |
 | `/tune set <setting> <value> [in <name>]` | Changes one setting, for example `/tune set executor effort high` |
-| `/tune delete <name>` | Deletes one of your own profiles |
+| `/tune delete <name>` | Deletes one of your own profiles; it asks you to repeat the command with `yes` |
 | `/tune reset <name>` | Returns a changed shipped profile to its shipped values |
 | `/tune brief [name]` | Prints the working rules a profile gives Claude |
 | `/tune why [name]` | Prints the reason for each level |
@@ -93,8 +95,8 @@ prompt.
 ## What it does not do
 
 - It sends nothing anywhere and keeps no record of what you do.
-- It changes no file on your computer. Your own profiles are kept in the
-  plugin's own storage inside Claude Code.
+- It changes no file of yours. Your own profiles are kept in one file in
+  Claude Code's own storage for plugins (see "Remove").
 - It does not override your own instructions: where they disagree with
   Tune's rules, yours win.
 
@@ -103,6 +105,8 @@ prompt.
 In the Claude desktop app: click `+` next to the prompt box, then
 **Plugins**, then **Add marketplace**, and enter
 `ADanLazar/claude-orchestration-tuner`. Then add the plugin `tune`.
+(These steps are from Claude Code's documentation and have not yet been
+tried with this plugin.)
 
 In a terminal:
 

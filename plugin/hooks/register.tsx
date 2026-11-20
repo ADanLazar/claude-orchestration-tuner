@@ -163,6 +163,12 @@ async function handOver($: any, now: View): Promise<string | null> {
   return seen === null ? null : REPLACES + now.brief
 }
 
+/** Opens the panel as a person first sees it: nothing is waiting to be confirmed. */
+async function openPane($: any): Promise<void> {
+  await update($, confirm, () => null)
+  await $.ui.open({ id: PANE, title: 'Tune', focus: true, columns: 50 })
+}
+
 /**
  * One change asked for in the panel: does it, says what went wrong if it was
  * refused, and applies the result. The rules reach the conversation with its next prompt.
@@ -245,7 +251,7 @@ export const register: Register = on => {
     try {
       const words = splitWords(e.args)
       if (words.length === 0) {
-        await $.ui.open({ id: PANE, title: 'Tune', focus: true, columns: 50 })
+        await openPane($)
         const profile = inForce(await refresh($))
 
         return { text: profile === null ? 'tune: no profile could be loaded' : show(profile) }
@@ -304,9 +310,7 @@ export const register: Register = on => {
           label="panel"
           hotkey="t"
           plain
-          onPress={() => {
-            void $.ui.open({ id: PANE, title: 'Tune', focus: true, columns: 50 })
-          }}
+          onPress={() => openPane($)}
         />
       </Box>
     )
@@ -355,7 +359,7 @@ export const register: Register = on => {
 
     const name = world.inForce
     const what = kind(world, name)
-    const filled = world.filled[name] ?? []
+    const filled = has(world.filled, name) ? (world.filled[name] ?? []) : []
     const all = names(world)
     const mismatch = mine !== null && mine.effort !== profile.main.effort
     let running: any[] = []
@@ -372,7 +376,9 @@ export const register: Register = on => {
         reasons = { rows: [], caveats: ['The notes that explain the levels could not be read.'], sources: [] }
       }
     }
-    const set = (path: string) => (value: string) => act($, io => change(io, name, path, value))
+    // Choosing the value already shown is not a change: it must not turn a shipped profile into a copy.
+    const set = (path: string, current: string) => (value: string) =>
+      value === current ? undefined : act($, io => change(io, name, path, value))
 
     return (
       <Box flexDirection="column">
@@ -382,11 +388,12 @@ export const register: Register = on => {
         {world.note !== null && <Text dimColor>{world.note}</Text>}
         {world.storeError !== null && <Text dimColor>{world.storeError}</Text>}
         <Box>
-          {all.slice(0, 9).map((one, index) => (
+          {all.map((one, index) => (
             <Button
               key={`use:${one}`}
               label={one}
-              hotkey={String(index + 1)}
+              // Nine digits to press; the rest are reached with the arrows or a click.
+              {...(index < 9 ? { hotkey: String(index + 1) } : {})}
               variant={one === name ? 'primary' : 'secondary'}
               onPress={() => act($, io => use(io, one))}
             />
@@ -408,11 +415,27 @@ export const register: Register = on => {
         {Object.entries(world.broken)
           .filter(([one]) => !has(world.shipped, one))
           .map(([one, cause]) => (
-            <Box>
-              <Text dimColor>
-                {one} cannot be read: {cause}{' '}
-              </Text>
-              <Button key={`delete-broken:${one}`} label="delete it" onPress={() => act($, io => remove(io, one))} />
+            <Box flexDirection="column">
+              <Box>
+                <Text dimColor>
+                  {one} cannot be read: {cause}{' '}
+                </Text>
+                <Button
+                  key={`delete-broken:${one}`}
+                  label="delete it"
+                  onPress={async () => {
+                    // It may hold settings an update made unreadable, so it is asked twice like any other.
+                    if ((await read($, confirm)) === `broken:${one}`) {
+                      await act($, io => remove(io, one))
+
+                      return
+                    }
+                    await update($, message, () => null)
+                    await update($, confirm, () => `broken:${one}`)
+                  }}
+                />
+              </Box>
+              {asking === `broken:${one}` && <Text>Delete {one}? Press delete it again.</Text>}
             </Box>
           ))}
         <Text>
@@ -434,14 +457,14 @@ export const register: Register = on => {
               key={`model:${role}`}
               options={[...new Set([...MODELS, level.model])].map(value => ({ value }))}
               value={level.model}
-              onSelect={set(`roles.${role}.model`)}
+              onSelect={set(`roles.${role}.model`, level.model)}
             />
             <Text> </Text>
             <Select
               key={`effort:${role}`}
               options={EFFORTS.map(value => ({ value }))}
               value={level.effort}
-              onSelect={set(`roles.${role}.effort`)}
+              onSelect={set(`roles.${role}.effort`, level.effort)}
             />
           </Box>
         ))}
@@ -461,7 +484,7 @@ export const register: Register = on => {
             { value: 'never', label: 'never' },
           ]}
           value={profile.team}
-          onSelect={set('team')}
+          onSelect={set('team', profile.team)}
         />
         <Select
           key="agents"
@@ -471,7 +494,7 @@ export const register: Register = on => {
             { value: 'may-continue', label: 'agents may continue' },
           ]}
           value={profile.agents}
-          onSelect={set('agents')}
+          onSelect={set('agents', profile.agents)}
         />
         <Select
           key="review"
@@ -481,21 +504,21 @@ export const register: Register = on => {
             { value: 'each-task', label: 'each task' },
           ]}
           value={profile.review}
-          onSelect={set('review')}
+          onSelect={set('review', profile.review)}
         />
         <Select
           key="escalation"
           label="escalate  "
           options={[{ value: 'on' }, { value: 'off' }]}
           value={profile.escalation ? 'on' : 'off'}
-          onSelect={set('escalation')}
+          onSelect={set('escalation', profile.escalation ? 'on' : 'off')}
         />
         <Select
           key="order"
           label="order     "
           options={ORDERS.map(order => ({ value: order.join(','), label: order.join(' > ') }))}
           value={profile.order.join(',')}
-          onSelect={set('order')}
+          onSelect={set('order', profile.order.join(','))}
         />
         <Text dimColor>one level up for: {profile.start_higher.join(', ') || 'nothing'}</Text>
         <Text dimColor>── running now ──</Text>
