@@ -123,8 +123,11 @@ function inForce(now: View): Profile | null {
   return has(shipped, name) ? (shipped[name] ?? null) : null
 }
 
-/** One line of at most `room` characters: what does not fit is dropped in steps, then cut. */
-export function rowText(now: View, mine: Level | null, room: number, _tasks?: string | null): string {
+/**
+ * One line of at most `room` characters: what does not fit is dropped in steps, then cut.
+ * The count of tasks done, when given, follows the name and goes after the levels.
+ */
+export function rowText(now: View, mine: Level | null, room: number, tasks?: string | null): string {
   const profile = inForce(now)
   if (profile === null) {
     return clip('tune: not loaded', room)
@@ -141,10 +144,12 @@ export function rowText(now: View, mine: Level | null, room: number, _tasks?: st
   }
   // The main conversation runs at another effort than the profile recommends.
   const marks = mine !== null && mine.effort !== profile.main.effort ? [`you ${mine.effort}!`] : []
+  const counted = tasks ? [tasks] : []
   const tries = [
-    [name, ...levels, ...marks],
-    [name, ...levels.slice(0, 1), ...marks],
-    [name, ...marks],
+    [name, ...counted, ...levels, ...marks],
+    [name, ...counted, ...levels.slice(0, 1), ...marks],
+    [name, ...counted, ...marks],
+    ...(tasks ? [[name, tasks]] : []),
     [name],
   ]
   for (const attempt of tries) {
@@ -261,13 +266,19 @@ async function rereadNow($: any, by: { agent: string | null; fragment: string; t
     const tasks = readPlan(text, baseName(plan))
     const who = by && { agent: by.agent, task: touched(tasks, text, by.fragment), tick: by.tick }
     const at = await $.clock.now()
+    let was = false
     // A file caught while it is rewritten may hold no task: that is not read, and the marks stay.
-    const done = await update($, progress, now =>
-      now.plan !== plan ? now : tasks.length === 0 && now.tasks.length > 0 ? unreadable(now) : observe(now, tasks, who, at),
-    )
-    // An ended agent its own tick marked running again is watched as well.
+    const done = await update($, progress, now => {
+      was = isRunning(now)
+
+      return now.plan !== plan ? now : tasks.length === 0 && now.tasks.length > 0 ? unreadable(now) : observe(now, tasks, who, at)
+    })
+    // An ended agent its own tick marked running again is watched as well, and counted in an open view.
     if (isRunning(done)) {
       startPoll($)
+      if (!was) {
+        ensureBeat($)
+      }
     }
   } catch {
     // The counts stay as they were.
@@ -680,6 +691,7 @@ export const register: Register = on => {
       // After a reload the state is kept: an agent it holds as running is watched again.
       if (isRunning(await read($, progress))) {
         startPoll($)
+        ensureBeat($)
       }
     } catch {
       // The next re-read starts the watch.
@@ -890,14 +902,32 @@ export const register: Register = on => {
       return next(e)
     }
     const { Box, Button, Text } = $.ui.resolve(e)
-    // The button beside the text needs about ten columns; on a very narrow row the text takes what there is.
+    const state = await read($, progress)
+    const watched = state.plan !== null || isRunning(state)
+    // Each button beside the text needs about ten columns; on a very narrow row the text takes what there is.
     const columns = e.props.bodyColumns
-    const room = Math.max(columns - 10, Math.min(columns, 16))
-    const line = rowText(await read($, view), await read($, main), room)
+    const room = Math.max(columns - (watched ? 20 : 10), Math.min(columns, 16))
+    const line = rowText(await read($, view), await read($, main), room, count(state))
 
     return (
       <Box>
         <Text dimColor>{line} </Text>
+        {watched && (
+          <Button
+            key="progress"
+            label="progress"
+            plain
+            onPress={async () => {
+              if ((await isPaneOpen($)) && (await read($, pane)) === 'progress') {
+                await closePane($)
+
+                return
+              }
+              await openPane($, 'progress')
+              await beatIfRunning($)
+            }}
+          />
+        )}
         <Button
           key="panel"
           label="panel"

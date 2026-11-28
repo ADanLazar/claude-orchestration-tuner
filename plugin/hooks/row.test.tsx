@@ -1,6 +1,8 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
-import { fake, mainRanAt, makeIo, ROW, START, words } from './kit'
+import type { View } from '../types'
+import { BUILD, fake, mainRanAt, makeIo, PANE, PLAN_PATH, PLAN_TEXT, ROW, START, words } from './kit'
+import { rowText } from './register'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
@@ -88,4 +90,85 @@ test('a survey showing above the prompt is left alone', async ($, on) => {
 
   expect((await words(ui)).includes('tune:')).toBe(false)
   await ui.unmount()
+})
+
+/** A session with the clock at 0 and the fixture plan in its files; `track` tracks it. */
+async function withPlan($: any, on: any, track: boolean): Promise<any> {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  if (track) {
+    await $.tool.call({ tool: 'mcp__tune__progress', plan: 'docs/plans/export.md' } as any)
+  }
+
+  return world
+}
+
+const hasProgress = async ($: any): Promise<boolean> => {
+  const ui = await $.ui.mount({ ...ROW, surface: 'terminal' })
+  const found = (await ui.find({ type: 'Button', key: 'progress' })) !== undefined
+  await ui.unmount()
+
+  return found
+}
+
+test('the row shows the count of tasks done when a plan is tracked', async ($, on) => {
+  await withPlan($, on, true)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...ROW, surface })
+    expect((await words(ui)).trim()).toBe('tune: build · 0/3 tasks · exec sonnet/med · review opus/med')
+    await ui.unmount()
+  }
+})
+
+test('on a narrow row the levels go before the count', () => {
+  const world = { shipped: { build: BUILD }, own: {}, filled: {}, broken: {}, inForce: 'build', stamp: '', storeError: null, note: null }
+  const view: View = { world, brief: '', applied: '', problems: [] }
+
+  expect(rowText(view, null, 41, '0/3 tasks')).toBe('tune: build · 0/3 tasks · exec sonnet/med')
+  expect(rowText(view, null, 30, '0/3 tasks')).toBe('tune: build · 0/3 tasks')
+  expect(rowText(view, null, 15, '0/3 tasks')).toBe('tune: build')
+})
+
+test('the progress button shows only when a plan is tracked or an agent runs', async ($, on) => {
+  await withPlan($, on, false)
+  expect(await hasProgress($)).toBe(false)
+
+  await $.tool.call({ tool: 'mcp__tune__progress', plan: 'docs/plans/export.md' } as any)
+  expect(await hasProgress($)).toBe(true)
+
+  await $.tool.call({ tool: 'mcp__tune__progress', clear: true } as any)
+  await $.agent.spawn({ prompt: 'Look around', subagentType: 'tune:executor', description: 'work' } as any)
+  expect(await hasProgress($)).toBe(true)
+})
+
+test('pressing progress opens the progress view, and pressing it again closes it', async ($, on) => {
+  const world = await withPlan($, on, true)
+  const ui = await $.ui.mount({ ...ROW, surface: 'terminal' })
+  await ui.press({ key: 'progress' })
+  expect(world.opened).toEqual(['tune'])
+  const pane = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 80 }, surface: 'terminal' })
+  expect(await words(pane)).toMatch(/^plan: docs\/plans\/export\.md$/m)
+  await pane.unmount()
+
+  await ui.press({ key: 'progress' })
+  expect(world.closed).toEqual(['tune'])
+  await ui.unmount()
+})
+
+test('with the settings showing, pressing progress switches the view', async ($, on) => {
+  const world = await withPlan($, on, true)
+  await $.command.run({ command: 'tune', args: '' } as any)
+  const ui = await $.ui.mount({ ...ROW, surface: 'terminal' })
+  await ui.press({ key: 'progress' })
+  await ui.unmount()
+
+  // The pane is open: re-opened on the progress view, so that the view leaves the keyboard with the prompt.
+  expect(world.opened.length).toBe(world.closed.length + 1)
+  const pane = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 80 }, surface: 'terminal' })
+  expect(await words(pane)).toMatch(/^plan: docs\/plans\/export\.md$/m)
+  expect((await pane.find({ type: 'Select', key: 'effort:executor' })) !== undefined).toBe(false)
+  await pane.unmount()
 })

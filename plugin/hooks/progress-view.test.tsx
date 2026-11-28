@@ -256,3 +256,30 @@ test('it draws without a profile', async ($, on) => {
   expect(await words(ui)).toContain('No plan is tracked.')
   await ui.unmount()
 })
+
+/** The time the progress view shows for Task 1, in seconds. */
+async function task1Time(ui: any): Promise<number> {
+  const found = (await words(ui)).match(/^. 1 Read the file\s.*?(\d+)m(\d\d)s/m)
+  expect(found !== null).toBe(true)
+
+  return Number(found![1]) * 60 + Number(found![2])
+}
+
+test('the view counts again when a reported agent ticks', async ($, on) => {
+  const { clock } = await running($, on)
+  const tickBox = (box: string) =>
+    $.tool.call({ tool: 'Edit', file_path: PLAN_PATH, old_string: `- [ ] ${box}`, new_string: `- [x] ${box}`, agentId: 'a1' } as any)
+  await tickBox('Open the file')
+  await report($, 'a1')
+  await tune($, 'progress')
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 80 }, surface: 'terminal' })
+
+  await clock.advance(5000)
+  await tickBox('Parse the rows')
+  const after = await task1Time(ui)
+  await clock.advance(3000)
+  const later = await task1Time(ui)
+  // The plan's two-second re-read alone would show two seconds more.
+  expect(later - after).toBe(3)
+  await ui.unmount()
+})
