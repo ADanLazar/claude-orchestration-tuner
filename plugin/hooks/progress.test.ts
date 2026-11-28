@@ -6,7 +6,9 @@ import {
   agentEnded,
   agentStarted,
   clear,
+  elapsed,
   isRunning,
+  left,
   NOTHING,
   observe,
   setTracker,
@@ -248,6 +250,37 @@ test('clear forgets the plan and the tracker and keeps the agents', () => {
   expect(cleared.agents.map(agent => agent.id)).toEqual(['a1'])
 })
 
+test('a task may be named like a built-in', () => {
+  const plan = (one: string, two: string): Task[] =>
+    readPlan(['## constructor', ...boxes(one), '', '## __proto__', ...boxes(two)].join('\n'), 'odd.md')
+  const quiet = track(NOTHING, 'docs/plans/odd.md', 'odd.md', plan('  ', '  '))
+  expect(quiet.tasks.map(task => task.key)).toEqual(['constructor', '__proto__'])
+
+  let state = agentStarted(quiet, executor('a1', 'Go'), 1000)
+  state = observe(state, plan('x ', '  '), { agent: 'a1', task: 0 }, 2000)
+  state = observe(state, plan('x ', 'x '), { agent: null, task: 1 }, 3000)
+
+  expect(stateOf(state, 'constructor')).toBe('running')
+  expect(stateOf(state, '__proto__')).toBe('running')
+  expect(Object.keys(state.marks)).toEqual(['constructor', '__proto__'])
+  expect(state.marks['constructor']!.agent).toBe('a1')
+  expect(state.marks['constructor']!.ticks).toEqual([{ at: 2000, kind: 'agent' }])
+  expect(state.marks['__proto__']!.ticks).toEqual([{ at: 3000, kind: 'main' }])
+  const kinds = ['none', 'unknown', 'over', 'about']
+  for (const key of ['constructor', '__proto__']) {
+    for (const each of [state, quiet]) {
+      const taken = elapsed(each, key, 4000)
+      expect(taken === null || typeof taken === 'number').toBe(true)
+      expect(kinds).toContain(left(each, key, 4000).kind)
+    }
+  }
+
+  expect(() => {
+    expect(stateOf(quiet, 'constructor')).toBe('waiting')
+    expect(stateOf(quiet, '__proto__')).toBe('waiting')
+  }).not.toThrow()
+})
+
 test('unreadable keeps the last counts', () => {
   const state = track(NOTHING, PATH, 'export.md', tasks('x  ', '    ', '  '))
   const lost = unreadable(state)
@@ -256,4 +289,99 @@ test('unreadable keeps the last counts', () => {
   expect(lost.tasks).toEqual(state.tasks)
   expect(lost.plan).toBe(PATH)
   expect(observe(lost, state.tasks, null, 1000).unread).toBe(false)
+})
+
+const TITLES = ['Read the file', 'Write the rows', 'Tests']
+/** A plan of up to three tasks, each argument a box per character as in `tasks`. */
+const plan = (...each: string[]): Task[] =>
+  readPlan(each.map((marks, index) => [`### Task ${index + 1}: ${TITLES[index]}`, ...boxes(marks)].join('\n')).join('\n\n'), 'export.md')
+const from = (...each: string[]): Progress => track(NOTHING, PATH, 'export.md', plan(...each))
+const tick = (state: Progress, agent: string | null, at: number, ...each: string[]): Progress =>
+  observe(state, plan(...each), { agent, task: 0 }, at)
+
+test('time taken runs while the agent runs and stops when it ends', () => {
+  const started = agentStarted(from('    '), executor('a1', 'Do Task 1'), 1000)
+  expect(elapsed(started, K1, 49000)).toBe(48000)
+  const ended = agentEnded(started, 'a1', 'completed', 131000)
+  expect(elapsed(ended, K1, 131000)).toBe(130000)
+  expect(elapsed(ended, K1, 900000)).toBe(130000)
+
+  let main = tick(from('    '), null, 5000, 'x   ')
+  main = tick(main, null, 65000, 'xx  ')
+  expect(elapsed(main, K1, 900000)).toBe(60000)
+
+  expect(elapsed(from('    '), K1, 900000)).toBe(null)
+})
+
+test('the estimate is this run\'s pace times the steps left', () => {
+  const started = agentStarted(from('     '), executor('a1', 'Do Task 1'), 0)
+  const one = tick(started, 'a1', 10000, 'x    ')
+  expect(left(one, K1, 10000)).toEqual({ kind: 'about', ms: 40000 })
+  expect(left(one, K1, 25000)).toEqual({ kind: 'about', ms: 25000 })
+
+  const two = tick(one, 'a1', 20000, 'xx   ')
+  expect(left(two, K1, 20000)).toEqual({ kind: 'about', ms: 30000 })
+})
+
+test('it reads over when it runs out', () => {
+  const state = tick(agentStarted(from('     '), executor('a1', 'Do Task 1'), 0), 'a1', 10000, 'x    ')
+  expect(left(state, K1, 50000)).toEqual({ kind: 'over' })
+  expect(left(state, K1, 60000)).toEqual({ kind: 'over' })
+})
+
+test('boxes ticked before this run are not counted', () => {
+  const started = agentStarted(from('xxx    '), executor('a1', 'Do Task 1'), 0)
+  const state = tick(started, 'a1', 30000, 'xxxx   ')
+  expect(left(state, K1, 30000)).toEqual({ kind: 'about', ms: 90000 })
+})
+
+test('the tick that starts a clock is not counted', () => {
+  const first = tick(agentStarted(from('    '), executor('a1', 'Go on'), 0), 'a1', 12000, 'x   ')
+  expect(first.marks[K1]!.startedAt).toBe(12000)
+  expect(left(first, K1, 12000)).toEqual({ kind: 'unknown' })
+
+  const second = tick(first, 'a1', 20000, 'xx  ')
+  expect(left(second, K1, 20000)).toEqual({ kind: 'about', ms: 16000 })
+})
+
+test('before the first tick the pace of finished tasks is used', () => {
+  let state = agentStarted(from('    ', '      '), executor('a1', 'Do Task 1'), 0)
+  for (const [at, marks] of [[10000, 'x   '], [20000, 'xx  '], [30000, 'xxx '], [40000, 'xxxx']] as const) {
+    state = tick(state, 'a1', at, marks, '      ')
+  }
+  state = agentEnded(state, 'a1', 'completed', 41000)
+  expect(stateOf(state, K1)).toBe('done')
+  state = agentStarted(state, executor('a2', 'Do Task 2'), 50000)
+  expect(left(state, K2, 60000)).toEqual({ kind: 'about', ms: 50000 })
+
+  const alone = agentStarted(from('    ', '      '), executor('a2', 'Do Task 2'), 50000)
+  expect(left(alone, K2, 60000)).toEqual({ kind: 'unknown' })
+})
+
+test('a correction changes the steps left, not the pace', () => {
+  const one = tick(agentStarted(from('     '), executor('a1', 'Do Task 1'), 0), 'a1', 10000, 'x    ')
+  expect(left(one, K1, 10000)).toEqual({ kind: 'about', ms: 40000 })
+
+  const fixed = tick(one, null, 10000, 'xx   ')
+  expect(fixed.marks[K1]!.ticks.map(each => each.kind)).toEqual(['agent', 'fix'])
+  expect(left(fixed, K1, 10000)).toEqual({ kind: 'about', ms: 30000 })
+})
+
+test('no estimate where no agent is at work', () => {
+  const main = tick(from('    '), null, 5000, 'x   ')
+  expect(left(main, K1, 6000)).toEqual({ kind: 'none' })
+
+  const started = tick(agentStarted(from('    '), executor('a1', 'Do Task 1'), 0), 'a1', 10000, 'x   ')
+  const toCheck = agentEnded(started, 'a1', 'completed', 11000)
+  expect(stateOf(toCheck, K1)).toBe('to check')
+  expect(left(toCheck, K1, 12000)).toEqual({ kind: 'none' })
+
+  const done = tick(started, 'a1', 20000, 'xxxx')
+  expect(stateOf(done, K1)).toBe('done')
+  expect(left(done, K1, 20000)).toEqual({ kind: 'none' })
+
+  const apart = agentStarted(from('    '), { ...executor('a1', 'Do Task 1'), apart: true }, 0)
+  const away = observe(apart, plan('x   '), null, 10000)
+  expect(away.marks[K1]!.agent).toBe('a1')
+  expect(left(away, K1, 10000)).toEqual({ kind: 'none' })
 })

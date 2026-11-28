@@ -26,14 +26,14 @@ const plain = (text: string): string => text.replace(/^﻿/, '').replace(/\r\n/g
 export function readPlan(text: string, fileName: string): Task[] {
   const lines = plain(text).split('\n')
   const tasks: Task[] = []
-  const seen: Record<string, number> = {}
+  const seen = new Map<string, number>()
   let current: Omit<Task, 'key' | 'number' | 'title'> = { name: fileName, from: -1, to: -1, steps: [] }
   let fence: string | null = null
 
   const close = (to: number): void => {
     if (current.steps.length === 0) return
-    const count = (seen[current.name] ?? 0) + 1
-    seen[current.name] = count
+    const count = (seen.get(current.name) ?? 0) + 1
+    seen.set(current.name, count)
     const numbered = current.from < 0 ? null : NUMBERED.exec(current.name)
     tasks.push({
       key: count === 1 ? current.name : `${current.name} #${count}`,

@@ -30,6 +30,11 @@ export type TaskState = 'waiting' | 'running' | 'done' | 'to check' | 'stopped'
 
 export const NOTHING: Progress = { plan: null, label: '', unread: false, tasks: [], marks: {}, agents: [], tracker: null }
 
+// Marks and counts are keyed by heading text, and a heading may be `constructor` or `__proto__`:
+// every read is of an own key, and every write builds the object.
+const has = (object: object, key: string): boolean => Object.prototype.hasOwnProperty.call(object, key)
+const markOf = (marks: Record<string, Mark>, key: string): Mark | undefined => (has(marks, key) ? marks[key] : undefined)
+
 const isTicker = (type: string): boolean => TICKERS.some(name => type === `tune:${name}`)
 const ticked = (task: Task): number => task.steps.filter(Boolean).length
 const runOf = (state: Progress, id: string | null): AgentRun | undefined =>
@@ -39,20 +44,20 @@ const runOf = (state: Progress, id: string | null): AgentRun | undefined =>
 const kept = (marks: Record<string, Mark>, tasks: Task[]): Record<string, Mark> =>
   Object.fromEntries(
     tasks.flatMap((task): [string, Mark][] => {
-      const mark = marks[task.key]
+      const mark = markOf(marks, task.key)
       return mark ? [[task.key, mark]] : []
     }),
   )
 
 /** Agent `id` on the task `key`, and off any other. */
 function link(marks: Record<string, Mark>, id: string, key: string, now: number): Record<string, Mark> {
-  const out: Record<string, Mark> = {}
-  for (const [other, mark] of Object.entries(marks)) {
-    const last = mark.ticks[mark.ticks.length - 1]
-    out[other] = other !== key && mark.agent === id ? { ...mark, agent: null, stoppedAt: last ? last.at : mark.startedAt } : mark
-  }
-  if (out[key]?.agent !== id) out[key] = { agent: id, startedAt: now, stoppedAt: null, ticks: [] }
-  return out
+  const out = Object.fromEntries(
+    Object.entries(marks).map(([other, mark]): [string, Mark] => {
+      const last = mark.ticks[mark.ticks.length - 1]
+      return [other, other !== key && mark.agent === id ? { ...mark, agent: null, stoppedAt: last ? last.at : mark.startedAt } : mark]
+    }),
+  )
+  return markOf(out, key)?.agent === id ? out : { ...out, [key]: { agent: id, startedAt: now, stoppedAt: null, ticks: [] } }
 }
 
 const running = (agents: AgentRun[], id: string): AgentRun[] =>
@@ -125,14 +130,13 @@ export function observe(
   by: { agent: string | null; task: number | null } | null,
   now: number,
 ): Progress {
-  const before: Record<string, number> = {}
-  for (const task of state.tasks) before[task.key] = ticked(task)
+  const before: Record<string, number> = Object.fromEntries(state.tasks.map(task => [task.key, ticked(task)]))
   // A key that is new has no earlier count, so nothing in it counts as a rise.
-  const rise = tasks.map(task => (task.key in before ? Math.max(ticked(task) - (before[task.key] ?? 0), 0) : 0))
+  const rise = tasks.map(task => (has(before, task.key) ? Math.max(ticked(task) - (before[task.key] ?? 0), 0) : 0))
   let marks = kept(state.marks, tasks)
   let agents = state.agents
   const add = (key: string, kind: Tick['kind'], count: number): void => {
-    const mark = marks[key] ?? { agent: null, startedAt: null, stoppedAt: null, ticks: [] }
+    const mark = markOf(marks, key) ?? { agent: null, startedAt: null, stoppedAt: null, ticks: [] }
     const ticks = [...mark.ticks, ...Array.from({ length: count }, () => ({ at: now, kind }))]
     marks = {
       ...marks,
@@ -158,7 +162,7 @@ export function observe(
   tasks.forEach((task, index) => {
     const count = rise[index] ?? 0
     if (index === own || count === 0) return
-    const agent = marks[task.key]?.agent ?? null
+    const agent = markOf(marks, task.key)?.agent ?? null
     const onIt = agent === null ? undefined : agents.find(each => each.id === agent)
     if (!main && onIt && onIt.endedAt === null) add(task.key, 'agent', count)
     else add(task.key, agent === null ? 'main' : 'fix', count)
@@ -169,13 +173,54 @@ export function observe(
 export function stateOf(state: Progress, key: string): TaskState {
   const task = state.tasks.find(each => each.key === key)
   if (task && task.steps.length > 0 && task.steps.every(Boolean)) return 'done'
-  const mark = state.marks[key]
+  const mark = markOf(state.marks, key)
   const run = mark ? runOf(state, mark.agent) : undefined
   if (run && run.endedAt === null) return 'running'
   if (run?.ended === 'failed' || run?.ended === 'stopped') return 'stopped'
   if (run?.ended === 'completed') return 'to check'
   if (mark?.ticks.some(tick => tick.kind === 'main')) return 'running'
   return 'waiting'
+}
+
+export function elapsed(state: Progress, key: string, now: number): number | null {
+  const mark = markOf(state.marks, key)
+  return !mark || mark.startedAt === null ? null : (mark.stoppedAt ?? now) - mark.startedAt
+}
+
+export type Left = { kind: 'none' } | { kind: 'unknown' } | { kind: 'over' } | { kind: 'about'; ms: number }
+
+/** This run's ticks: an agent's, after the tick that started the clock. */
+const counted = (mark: Mark): Tick[] =>
+  mark.ticks.filter(tick => tick.kind === 'agent' && mark.startedAt !== null && tick.at > mark.startedAt)
+
+export function left(state: Progress, key: string, now: number): Left {
+  const task = state.tasks.find(each => each.key === key)
+  const mark = markOf(state.marks, key)
+  const run = mark ? runOf(state, mark.agent) : undefined
+  if (!task || !mark || mark.startedAt === null || !run || run.endedAt !== null || run.apart) return { kind: 'none' }
+  if (stateOf(state, key) === 'done') return { kind: 'none' }
+  const open = task.steps.filter(step => !step).length
+  const own = counted(mark)
+  const last = own[own.length - 1]
+  let figure: number
+  if (last) {
+    figure = ((last.at - mark.startedAt) / own.length) * open - (now - last.at)
+  } else {
+    let time = 0
+    let count = 0
+    for (const each of state.tasks) {
+      const done = markOf(state.marks, each.key)
+      if (!done || done.startedAt === null || stateOf(state, each.key) !== 'done') continue
+      const ticks = counted(done)
+      const end = ticks[ticks.length - 1]
+      if (!end) continue
+      time += end.at - done.startedAt
+      count += ticks.length
+    }
+    if (count === 0) return { kind: 'unknown' }
+    figure = (time / count) * open - (now - mark.startedAt)
+  }
+  return figure <= 0 ? { kind: 'over' } : { kind: 'about', ms: figure }
 }
 
 export function isRunning(state: Progress): boolean {
