@@ -210,11 +210,22 @@ async function handOver($: any, now: View): Promise<string | null> {
 // Enough rows for the whole panel where the terminal shows it above the prompt and not at the side.
 const INLINE_ROWS = 37
 
+// The re-read under way, or the last one: each starts once the one before has applied its result.
+let rereads: Promise<void> = Promise.resolve()
+
 /**
  * Reads the tracked plan again and records what changed; `by` names whose edit it was.
- * Nothing is read, and the clock is not asked, when no plan is tracked. Never throws.
+ * Re-reads run one at a time, in the order asked. Never throws.
  */
-async function reread($: any, by: { agent: string | null; fragment: string; tick: boolean } | null): Promise<void> {
+function reread($: any, by: { agent: string | null; fragment: string; tick: boolean } | null): Promise<void> {
+  const next = rereads.then(() => rereadNow($, by))
+  rereads = next
+
+  return next
+}
+
+/** One re-read. Nothing is read, and the clock is not asked, when no plan is tracked. Never throws. */
+async function rereadNow($: any, by: { agent: string | null; fragment: string; tick: boolean } | null): Promise<void> {
   try {
     const { plan, anywhere } = await read($, progress)
     if (plan === null) {
@@ -236,7 +247,14 @@ async function reread($: any, by: { agent: string | null; fragment: string; tick
     const tasks = readPlan(text, baseName(plan))
     const who = by && { agent: by.agent, task: touched(tasks, text, by.fragment), tick: by.tick }
     const at = await $.clock.now()
-    await update($, progress, now => (now.plan === plan ? observe(now, tasks, who, at) : now))
+    // A file caught while it is rewritten may hold no task: that is not read, and the marks stay.
+    const done = await update($, progress, now =>
+      now.plan !== plan ? now : tasks.length === 0 && now.tasks.length > 0 ? unreadable(now) : observe(now, tasks, who, at),
+    )
+    // An ended agent its own tick marked running again is watched as well.
+    if (isRunning(done)) {
+      startPoll($)
+    }
   } catch {
     // The counts stay as they were.
   }
@@ -295,15 +313,17 @@ async function answerTool($: any, input: Record<string, unknown>, anywhere = fal
   if (plan === null) {
     await reread($, null)
   }
-  let state = await read($, progress)
   // Both inputs are checked before either is applied.
+  let at = 0
   if (input.tracker !== undefined) {
     try {
-      state = setTracker(state, input.tracker, await $.clock.now())
+      at = await $.clock.now()
+      setTracker(NOTHING, input.tracker, at)
     } catch {
       return 'tune: tracker needs an id. Nothing was changed.'
     }
   }
+  let found: { path: string; label: string; tasks: ReturnType<typeof readPlan> } | null = null
   if (plan !== null) {
     const cwd = String(await $.session.cwd())
     const path = resolvePath(cwd, plan)
@@ -321,10 +341,20 @@ async function answerTool($: any, input: Record<string, unknown>, anywhere = fal
     if (tasks.length === 0) {
       return `tune: ${oneLine(plan)} has no task with a checkbox. Nothing was changed.`
     }
-    state = track(state, path, relativeTo(cwd, path), tasks, anywhere)
+    found = { path, label: relativeTo(cwd, path), tasks }
   }
-  const done = state
-  await update($, progress, () => done)
+  // Applied to the state as it is now: an agent's start or a tick seen while this was reading stays.
+  const done = await update($, progress, now => {
+    let state = now
+    if (input.tracker !== undefined) {
+      state = setTracker(state, input.tracker, at)
+    }
+    if (found !== null) {
+      state = track(state, found.path, found.label, found.tasks, anywhere)
+    }
+
+    return state
+  })
   const said = summary(shown(done, 0))
 
   return input.tracker !== undefined && done.tracker !== null ? `Tracker item ${done.tracker.id} noted. ${said}` : said
@@ -385,8 +415,15 @@ function stopPoll(): void {
   }
 }
 
+// True while a period's work is under way: a period that comes due meanwhile is skipped.
+let polling = false
+
 /** One period of the re-read: the plan, then each running agent as the engine lists it. Never throws. */
 async function pollOnce($: any): Promise<void> {
+  if (polling) {
+    return
+  }
+  polling = true
   try {
     if (!isRunning(await read($, progress))) {
       stopPoll()
@@ -415,6 +452,8 @@ async function pollOnce($: any): Promise<void> {
     })
   } catch {
     // The next period tries again.
+  } finally {
+    polling = false
   }
 }
 
@@ -534,8 +573,29 @@ export const register: Register = on => {
     } catch {
       // The session must start whatever happens to Tune.
     }
+    try {
+      // After a reload the state is kept: an agent it holds as running is watched again.
+      if (isRunning(await read($, progress))) {
+        startPoll($)
+      }
+    } catch {
+      // The next re-read starts the watch.
+    }
 
     return started
+  })
+
+  // After /clear or a resume the process goes on: the ended session's progress goes with it.
+  on('session.end', async ($, e, next) => {
+    const ended = await next(e)
+    try {
+      stopPoll()
+      await update($, progress, () => NOTHING)
+    } catch {
+      // A session ends whatever happens to Tune.
+    }
+
+    return ended
   })
 
   on('prompt.submit', async ($, e, next) => {
@@ -640,10 +700,11 @@ export const register: Register = on => {
     try {
       // An agent this session never saw start asks nothing of the clock.
       if ((await read($, progress)).agents.some(run => run.id === e.agentId)) {
-        const at = await $.clock.now()
-        await update($, progress, now => agentEnded(now, e.agentId, e.status, at))
+        // Boxes it ticked through a shell just before it ended are its own.
         await reread($, null)
-        if (!isRunning(await read($, progress))) {
+        const at = await $.clock.now()
+        const done = await update($, progress, now => agentEnded(now, e.agentId, e.status, at))
+        if (!isRunning(done)) {
           stopPoll()
         }
       }

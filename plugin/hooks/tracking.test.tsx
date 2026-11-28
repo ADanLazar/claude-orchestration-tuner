@@ -614,3 +614,191 @@ test('a plan the person tracked anywhere is still re-read', async ($, on) => {
   await $.prompt.submit({ text: 'go' } as any)
   expect(await tune($)).toContain('3 of 9 steps')
 })
+
+const SESSION_END = { reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } } as const
+const plansRead = (world: { reads: string[] }): number => world.reads.filter(path => path === PLAN_PATH).length
+
+test('the tool keeps what happened while it was reading', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+
+  let started = false
+  world.onRead = async path => {
+    if (path === PLAN_PATH && !started) {
+      started = true
+      await spawn($, ON_TASK_1)
+    }
+  }
+  await tune($, { plan: 'docs/plans/export.md', tracker: { id: 'PROJ-12', title: 'Export to CSV', state: 'In Progress' } })
+  const now = await statusOf($)
+  expect(now).toMatch(/^▶ 1 Read the file/m)
+  expect(now.split('\n')[0]).toBe('PROJ-12 · In Progress · Export to CSV · read just now')
+})
+
+test('re-reads do not overtake each other', async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+  await spawn($, ON_TASK_1)
+
+  let release = () => {}
+  const held = new Promise<void>(done => (release = done))
+  let first = true
+  world.onRead = async path => {
+    if (path === PLAN_PATH && first) {
+      first = false
+      await held
+    }
+  }
+  await clock.advance(2000)
+  const edit = $.tool.call({ tool: 'Edit', file_path: PLAN_PATH, old_string: '- [ ] Open the file', new_string: '- [x] Open the file', agentId: 'a1' } as any)
+  await clock.settle()
+  release()
+  await edit
+  await clock.settle()
+  const after = await statusOf($)
+  expect(after).toMatch(/^▶ 1 Read the file.*1\/3/m)
+  expect(after).toContain('1 of 9 steps')
+  await clock.advance(2000)
+  expect(await statusOf($)).toContain('1 of 9 steps')
+})
+
+test('the timer skips a period while the last one is still reading', async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+  await spawn($, ON_TASK_1)
+
+  let release = () => {}
+  const held = new Promise<void>(done => (release = done))
+  let first = true
+  world.onRead = async path => {
+    if (path === PLAN_PATH && first) {
+      first = false
+      await held
+    }
+  }
+  const before = plansRead(world)
+  await clock.advance(2000)
+  await clock.advance(6000)
+  release()
+  await clock.settle()
+  expect(plansRead(world)).toBe(before + 1)
+})
+
+test('the end of a session clears the progress', async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+  await spawn($, ON_TASK_1)
+
+  expect(await $.session.end(SESSION_END as any)).toEqual({ sessionId: 'session-1' })
+  expect(await statusOf($)).toBe('No plan is tracked.')
+  const reads = plansRead(world)
+  await clock.advance(6000)
+  expect(plansRead(world)).toBe(reads)
+})
+
+test('a plan that briefly holds nothing keeps its times', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+  await spawn($, ON_TASK_1)
+  await $.tool.call({ tool: 'Edit', file_path: PLAN_PATH, old_string: '- [ ] Open the file', new_string: '- [x] Open the file', agentId: 'a1' } as any)
+
+  world.files[PLAN_PATH] = ''
+  await $.prompt.submit({ text: 'go' } as any)
+  const empty = await statusOf($)
+  expect(empty).toMatch(/^▶ 1 Read the file.*1\/3/m)
+  expect(empty).toContain('The plan file could not be read; these are the last counts.')
+
+  world.files[PLAN_PATH] = ticked(PLAN_TEXT, 'Open the file', 'Parse the rows')
+  await $.prompt.submit({ text: 'go on' } as any)
+  const back = await statusOf($)
+  expect(back).toMatch(/^▶ 1 Read the file.*2\/3.*\n {5}executor/m)
+  expect(back).not.toContain('could not be read')
+})
+
+test('ticks made just before the report are the agent\'s', async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+  await spawn($, ON_TASK_1)
+
+  await clock.set(3000)
+  world.files[PLAN_PATH] = ticked(PLAN_TEXT, 'Open the file', 'Parse the rows', 'Report bad rows')
+  await report($, 'a1', 'completed')
+  expect(await statusOf($)).toMatch(/^✓ 1 Read the file.*3\/3\s+0m03s/m)
+  // Only an agent's ticks feed the estimate of the next task: a correction would leave none.
+  await clock.set(4000)
+  await spawn($, 'Do Task 2 of the plan at /work/docs/plans/export.md')
+  expect(await statusOf($)).toMatch(/^▶ 2 Write the rows.*~5s left/m)
+})
+
+test('an agent resumed by its own tick is watched', async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+  await spawn($, ON_TASK_1)
+  await report($, 'a1', 'completed')
+
+  await $.tool.call({ tool: 'Edit', file_path: PLAN_PATH, old_string: '- [ ] Open the file', new_string: '- [x] Open the file', agentId: 'a1' } as any)
+  expect(await statusOf($)).toMatch(/^▶ 1 Read the file/m)
+  world.agents = []
+  await clock.advance(2000)
+  expect(await statusOf($)).toMatch(/^! 1 Read the file/m)
+})
+
+test('a reload with an agent running starts the watch again', async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+  await spawn($, ON_TASK_1)
+
+  await $.session.start(START)
+  world.agents = []
+  await clock.advance(2000)
+  expect(await statusOf($)).toMatch(/^! 1 Read the file/m)
+})
+
+test("a resumed agent's time leaves out the gap", async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+  await spawn($, ON_TASK_1)
+
+  await clock.set(4000)
+  await report($, 'a1', 'completed')
+  await clock.set(9000)
+  expect((await spawn($, '', 'tune:executor', { resume: { agentId: 'a1' } })).agentId).toBe('a1')
+  await clock.set(12000)
+  expect(await statusOf($)).toMatch(/^▶ 1 Read the file.*0m07s/m)
+})

@@ -102,6 +102,8 @@ export type FakeIo = {
   tools: Record<string, any>[]
   /** Every path the mod read, in order. */
   reads: string[]
+  /** Run with the path before a read answers; the text read is the file's when the read was asked. */
+  onRead?: (path: string) => void | Promise<void>
   /** How many agents the stand-in `agent.spawn` started. */
   spawned: number
   /** The folder the stand-in `agent.spawn` lists a started agent in; `cwd` when not set. */
@@ -260,6 +262,7 @@ export function fake(on: any, world: FakeIo): void {
     value: [...up].map(id => ({ id, title: 'Tune', isShown: true, isFocused: true, isPlaced: true })),
   }))
   on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
+  on('session.end', (_: unknown, e: any) => ({ sessionId: e.sessionId }))
   on('agent.list', () => ({ value: world.agents }))
   on('ui.toast', (_: unknown, e: any) => {
     world.toasts.push(String(e.text ?? e))
@@ -276,8 +279,9 @@ export function fake(on: any, world: FakeIo): void {
     // Recorded as served: a read of the plugin's real folder is recorded under ROOT.
     const path = local(String(e.path))
     world.reads.push(path)
+    const read = answer(world.io.read(path))
 
-    return answer(world.io.read(path))
+    return world.onRead === undefined ? read : Promise.resolve(world.onRead(path)).then(() => read)
   })
   // A key of world.files is a file, landing where world.links says or on itself; a folder above one is a
   // directory; anything else leads nowhere, and the call rejects as the engine's does for a missing path.
@@ -323,7 +327,14 @@ export function fake(on: any, world: FakeIo): void {
     return { result: 'ok', text: 'ok' }
   })
   // A started agent is listed as the engine lists it; its report leaves the list alone.
+  // A resume answers the id it continues under and lists that agent as running again.
   on('agent.spawn', (_: unknown, e: any) => {
+    if (typeof e.resume?.agentId === 'string') {
+      const id = String(e.resume.agentId)
+      world.agents = world.agents.map((agent: any) => (agent?.id === id ? { ...agent, taskStatus: 'running' } : agent))
+
+      return { model: 'claude-sonnet-5-5', agentId: id }
+    }
     world.spawned += 1
     const id = `a${world.spawned}`
     world.agents.push({
