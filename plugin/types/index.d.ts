@@ -66,6 +66,7 @@ export type Progress = {
   plan: string | null
   label: string
   unread: boolean
+  anywhere: boolean
   tasks: Task[]
   marks: Record<string, Mark>
   agents: AgentRun[]

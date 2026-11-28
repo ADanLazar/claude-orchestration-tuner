@@ -256,6 +256,14 @@ test('clear forgets the plan and the tracker and keeps the agents', () => {
   expect(cleared.agents.map(agent => agent.id)).toEqual(['a1'])
 })
 
+test('who tracked the plan is kept', () => {
+  const plan = tasks('   ', '    ', '  ')
+
+  expect(track(NOTHING, PATH, 'export.md', plan).anywhere).toBe(false)
+  expect(track(NOTHING, PATH, 'export.md', plan, true).anywhere).toBe(true)
+  expect(clear(track(NOTHING, PATH, 'export.md', plan, true)).anywhere).toBe(false)
+})
+
 test('a task may be named like a built-in', () => {
   const plan = (one: string, two: string): Task[] =>
     readPlan(['## constructor', ...boxes(one), '', '## __proto__', ...boxes(two)].join('\n'), 'odd.md')

@@ -216,13 +216,18 @@ const INLINE_ROWS = 37
  */
 async function reread($: any, by: { agent: string | null; fragment: string } | null): Promise<void> {
   try {
-    const plan = (await read($, progress)).plan
+    const { plan, anywhere } = await read($, progress)
     if (plan === null) {
       return
     }
+    // A plan the model named is checked again: it may have become a link to a file outside.
+    const real = anywhere ? plan : await insideProject($, plan)
     let text: string
     try {
-      text = String(await $.fs.read(plan))
+      if (real === null) {
+        throw new Error('not inside the project now')
+      }
+      text = String(await $.fs.read(real))
     } catch {
       await update($, progress, now => (now.plan === plan ? unreadable(now) : now))
 
@@ -249,26 +254,29 @@ async function landing($: any, path: string): Promise<string | null | undefined>
 }
 
 /**
- * Whether an already resolved path is a .md file inside the session's folder, by its spelling first
- * (no disk access) and then by where it really lands. A path that leads nowhere counts as inside when
- * the nearest folder above it that is there lands inside.
+ * Where an already resolved path really lands when it is a .md file inside the session's folder, and
+ * null when it is not: by its spelling first (no disk access), then by where it lands. A path that leads
+ * nowhere counts as inside, and is answered as given, when the nearest folder above it that is there
+ * lands inside. What follows the check reads the path it answers.
  */
-async function insideProject($: any, path: string): Promise<boolean> {
+async function insideProject($: any, path: string): Promise<string | null> {
   const base = resolvePath(String(await $.session.cwd()), '')
   if (!path.startsWith(`${base}/`) || path.length === base.length + 1 || !/\.md$/i.test(path)) {
-    return false
+    return null
   }
   const root = await landing($, base)
   if (typeof root !== 'string' || root === '') {
-    return false
+    return null
   }
   for (let at = path, own = true; ; at = at.slice(0, at.lastIndexOf('/')), own = false) {
     const real = at === base ? root : await landing($, at)
     if (real === undefined) {
-      return false
+      return null
     }
     if (real !== null) {
-      return real.startsWith(`${root}/`) || (!own && real === root)
+      const inside = real.startsWith(`${root}/`) || (!own && real === root)
+
+      return !inside ? null : own ? real : path
     }
   }
 }
@@ -299,12 +307,13 @@ async function answerTool($: any, input: Record<string, unknown>, anywhere = fal
   if (plan !== null) {
     const cwd = String(await $.session.cwd())
     const path = resolvePath(cwd, plan)
-    if (!anywhere && !(await insideProject($, path))) {
+    const real = anywhere ? path : await insideProject($, path)
+    if (real === null) {
       return `tune: ${oneLine(plan)} is not a .md file inside this project. To track it, ask the person to type /tune track <path>. Nothing was changed.`
     }
     let text: string
     try {
-      text = String(await $.fs.read(path))
+      text = String(await $.fs.read(real))
     } catch {
       return `tune: ${oneLine(plan)} could not be read. Nothing was changed.`
     }
@@ -312,7 +321,7 @@ async function answerTool($: any, input: Record<string, unknown>, anywhere = fal
     if (tasks.length === 0) {
       return `tune: ${oneLine(plan)} has no task with a checkbox. Nothing was changed.`
     }
-    state = track(state, path, relativeTo(cwd, path), tasks)
+    state = track(state, path, relativeTo(cwd, path), tasks, anywhere)
   }
   const done = state
   await update($, progress, () => done)
@@ -420,12 +429,13 @@ async function trackFromPrompt($: any, prompt: string): Promise<void> {
   const cwd = String(await $.session.cwd())
   for (const named of mdPaths(prompt)) {
     const path = resolvePath(cwd, named)
-    if (!(await insideProject($, path))) {
+    const real = await insideProject($, path)
+    if (real === null) {
       continue
     }
     let text: string
     try {
-      text = String(await $.fs.read(path))
+      text = String(await $.fs.read(real))
     } catch {
       continue
     }

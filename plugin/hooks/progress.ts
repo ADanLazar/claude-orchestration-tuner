@@ -21,6 +21,8 @@ export type Progress = {
   plan: string | null
   label: string
   unread: boolean
+  /** Tracked by the person's own command, who may name a plan anywhere: it is re-read without the check. */
+  anywhere: boolean
   tasks: Task[]
   marks: Record<string, Mark>
   agents: AgentRun[]
@@ -28,7 +30,7 @@ export type Progress = {
 }
 export type TaskState = 'waiting' | 'running' | 'done' | 'to check' | 'stopped'
 
-export const NOTHING: Progress = { plan: null, label: '', unread: false, tasks: [], marks: {}, agents: [], tracker: null }
+export const NOTHING: Progress = { plan: null, label: '', unread: false, anywhere: false, tasks: [], marks: {}, agents: [], tracker: null }
 
 // Marks and counts are keyed by heading text, and a heading may be `constructor` or `__proto__`:
 // every read is of an own key, and every write builds the object.
@@ -67,9 +69,9 @@ const running = (agents: AgentRun[], id: string): AgentRun[] =>
 const resumed = (marks: Record<string, Mark>, id: string): Record<string, Mark> =>
   Object.fromEntries(Object.entries(marks).map(([key, mark]) => [key, mark.agent === id ? { ...mark, stoppedAt: null } : mark]))
 
-export function track(state: Progress, plan: string, label: string, tasks: Task[]): Progress {
+export function track(state: Progress, plan: string, label: string, tasks: Task[], anywhere = false): Progress {
   const marks = plan === state.plan ? kept(state.marks, tasks) : {}
-  return { ...state, plan, label, unread: false, tasks, marks }
+  return { ...state, plan, label, unread: false, anywhere, tasks, marks }
 }
 
 export function clear(state: Progress): Progress {

@@ -552,3 +552,65 @@ test('a plan outside the project named in an agent\'s prompt is not tracked', as
   expect((await statusOf($)).split('\n')[0]).toBe('No plan is tracked.')
   expect(world.reads).not.toContain(OUTSIDE)
 })
+
+test('a tracked plan that becomes a link to an outside file is not read again', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  world.files[OUTSIDE] = ticked(PLAN_TEXT, 'Open the file', 'Parse the rows')
+  fake(on, world)
+  await $.session.start(START)
+  expect(await tune($, { plan: 'docs/plans/export.md' })).toContain('0 of 9 steps')
+
+  // The stand-in's read does not follow links: the link's own path is given the outside text it would show.
+  world.links[PLAN_PATH] = OUTSIDE
+  world.files[PLAN_PATH] = String(world.files[OUTSIDE])
+  expect((await $.prompt.submit({ text: 'go' } as any)).text).toBe('go')
+  expect(await tune($)).toBe(
+    'Tracking docs/plans/export.md: 0 of 3 tasks done, 0 of 9 steps. The plan file could not be read; these are the last counts.',
+  )
+  expect(world.reads).not.toContain(OUTSIDE)
+})
+
+test('the same while an agent runs', async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  world.files[OUTSIDE] = ticked(PLAN_TEXT, 'Open the file', 'Parse the rows')
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+  await spawn($, ON_TASK_1)
+
+  // The stand-in's read does not follow links: the link's own path is given the outside text it would show.
+  world.links[PLAN_PATH] = OUTSIDE
+  world.files[PLAN_PATH] = String(world.files[OUTSIDE])
+  await clock.advance(2000)
+  expect(await tune($)).toContain('0 of 9 steps')
+  expect(world.reads).not.toContain(OUTSIDE)
+})
+
+test('the tool reads the file the check resolved', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  world.files['/work/docs/plans/link.md'] = '### Task 1: One\n- [ ] step\n'
+  world.links['/work/docs/plans/link.md'] = PLAN_PATH
+  fake(on, world)
+  await $.session.start(START)
+
+  expect(await tune($, { plan: 'docs/plans/link.md' })).toContain('0 of 3 tasks done, 0 of 9 steps')
+})
+
+test('a plan the person tracked anywhere is still re-read', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[OUTSIDE] = ticked(PLAN_TEXT, 'Open the file', 'Parse the rows')
+  fake(on, world)
+  await $.session.start(START)
+  expect((await track($, `track ${OUTSIDE}`)).text).toContain('2 of 9 steps')
+
+  world.files[OUTSIDE] = ticked(String(world.files[OUTSIDE]), 'Report bad rows')
+  await $.prompt.submit({ text: 'go' } as any)
+  expect(await tune($)).toContain('3 of 9 steps')
+})
