@@ -181,6 +181,10 @@ try {
   const { render, MAX_CHARS } = await import(pathToFileURL(join(hooks, 'brief.ts')).href)
   const { parsePersona } = await import(pathToFileURL(join(hooks, 'persona.ts')).href)
   const { BUILD } = await import(pathToFileURL(join(hooks, 'kit.ts')).href)
+  const planTickers = (await import(pathToFileURL(join(hooks, 'plan.ts')).href)).TICKERS
+  if (JSON.stringify(planTickers) !== JSON.stringify(TICKERS)) {
+    fault(join(hooks, 'plan.ts'), 'its ticking personas differ from the ones check.mjs expects')
+  }
   const shippedFile = join(plugin, 'profiles', 'build.json')
   try {
     const checked = validate(profile)

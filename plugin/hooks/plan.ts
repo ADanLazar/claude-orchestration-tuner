@@ -12,6 +12,9 @@ export type Task = {
   steps: boolean[]
 }
 
+/** The personas that edit and tick a plan's boxes; progress.ts re-exports it. */
+export const TICKERS: readonly string[] = ['executor', 'test-engineer', 'writer', 'debugger', 'designer']
+
 const HEADING = /^#{1,6} (.*)$/
 const STEP = /^[ \t]*[-*+] \[([ xX])\](?: |$)/
 const FENCE = /^[ \t]*(`{3,}|~{3,})/
