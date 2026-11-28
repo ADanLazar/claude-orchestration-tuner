@@ -15,6 +15,7 @@ export const HELP = [
   '  reset <name>                      return a changed shipped profile to its shipped values',
   '  brief [name]                      the working rules a profile gives',
   '  why [name]                        the reason for each level',
+  '  status                            the tracked plan\'s progress, as text',
   'Dials: main.model, main.effort, <role> model, <role> effort, team, agents, review,',
   'questions, reports, escalation (on or off), order, start_higher, summary, tests, notes.',
 ].join('\n')

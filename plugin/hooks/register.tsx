@@ -10,7 +10,7 @@ import { GUARD, render } from './brief'
 import { explain, run } from './commands'
 import { baseName, readPlan, relativeTo, resolvePath, touched } from './plan'
 import { EFFORTS, MODELS } from './profile'
-import { clear, NOTHING, observe, setTracker, shown, summary, track, unreadable } from './progress'
+import { clear, lines, NOTHING, observe, setTracker, shown, summary, track, unreadable } from './progress'
 import { change, create, get, has, keep, kind, load, names, remove, reset, use } from './store'
 import type { Io } from './store'
 
@@ -69,6 +69,8 @@ const clip = (text: string, room: number): string =>
 const short = (effort: string): string => (effort === 'medium' ? 'med' : effort)
 const thousands = (tokens: number): string => `${Math.round(tokens / 1000)}K`
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+/** A path as the model gave it, made one line for an answer: control characters become spaces. */
+const oneLine = (text: string): string => text.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 200)
 
 const ORDERS = [
   ['correct', 'time', 'tokens'],
@@ -249,11 +251,11 @@ async function answerTool($: any, input: Record<string, unknown>): Promise<strin
     try {
       text = String(await $.fs.read(path))
     } catch {
-      return `tune: ${plan} could not be read. Nothing was changed.`
+      return `tune: ${oneLine(plan)} could not be read. Nothing was changed.`
     }
     const tasks = readPlan(text, baseName(path))
     if (tasks.length === 0) {
-      return `tune: ${plan} has no task with a checkbox. Nothing was changed.`
+      return `tune: ${oneLine(plan)} has no task with a checkbox. Nothing was changed.`
     }
     state = track(state, path, relativeTo(cwd, path), tasks)
   }
@@ -262,6 +264,30 @@ async function answerTool($: any, input: Record<string, unknown>): Promise<strin
   const said = summary(shown(done, 0))
 
   return input.tracker !== undefined && done.tracker !== null ? `Tracker item ${done.tracker.id} noted. ${said}` : said
+}
+
+/** Each agent's id, mapped to the level it runs at: `sonnet-5-5 / medium`. `{}` when the list cannot be had. */
+async function levelsOf($: any): Promise<Record<string, string>> {
+  try {
+    const levels: Record<string, string> = {}
+    for (const agent of await $.agent.list()) {
+      levels[String(agent.id)] = `${String(agent.model ?? '?').replace('claude-', '')} / ${agent.effort ?? '-'}`
+    }
+
+    return levels
+  } catch {
+    return {}
+  }
+}
+
+/** What /tune status prints. With nothing tracked and no agent known, neither the clock nor the list is asked. */
+async function statusText($: any, width: number): Promise<string> {
+  const state = await read($, progress)
+  if (state.plan === null && state.agents.length === 0) {
+    return 'No plan is tracked.'
+  }
+
+  return lines(shown(state, await $.clock.now(), await levelsOf($)), width).join('\n')
 }
 
 /** Opens the panel as a person first sees it: nothing is waiting to be confirmed. */
@@ -426,6 +452,10 @@ export const register: Register = on => {
 
         return { text: 'The Tune panel is closed.' }
       }
+      if (words.length === 1 && words[0] === 'status') {
+        // For the person alone: no model call, and the text stays out of later requests.
+        return { text: await statusText($, Math.min(e.presentation?.columns ?? 80, 100)), isTextDisplayOnly: true as const }
+      }
       const answer = await run(ioOf($), words)
       await update($, message, () => answer.text)
       if (!answer.changed) {
@@ -510,7 +540,15 @@ export const register: Register = on => {
         label="command"
         placeholder="a tune command, for example: set notes Ask before adding a dependency"
         onSubmit={async value => {
-          const answer = await run(ioOf($), splitWords(value))
+          const typed = splitWords(value)
+          if (typed.length === 1 && typed[0] === 'status') {
+            const text = await statusText($, e.props.bodyColumns)
+            await update($, message, () => text)
+            await update($, confirm, () => null)
+
+            return
+          }
+          const answer = await run(ioOf($), typed)
           await update($, message, () => answer.text)
           await update($, confirm, () => null)
           if (answer.changed) {

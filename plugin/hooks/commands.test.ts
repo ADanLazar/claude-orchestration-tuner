@@ -188,3 +188,7 @@ test('show and set know the two new dials', async () => {
   expect(HELP).toContain('questions')
   expect(HELP).toContain('reports')
 })
+
+test('HELP names status', () => {
+  expect(HELP).toContain('status')
+})

@@ -1,12 +1,14 @@
 // The tool that names the tracked plan, and the re-reads of the plan after an edit and a prompt.
 import { expect, mock, test } from 'claude-code/testing'
 
-import { fake, makeIo, PLAN_PATH, PLAN_TEXT, ROOT, START } from './kit'
+import { fake, makeIo, PANE, PLAN_PATH, PLAN_TEXT, ROOT, START, words } from './kit'
 
 const tune = async ($: any, input: Record<string, unknown> = {}): Promise<string> =>
   String((await $.tool.call({ tool: 'mcp__tune__progress', ...input } as any)).result)
 const tick = ($: any, step: string) =>
   $.tool.call({ tool: 'Edit', file_path: PLAN_PATH, old_string: `- [ ] ${step}`, new_string: `- [x] ${step}` } as any)
+
+const status = async ($: any): Promise<any> => $.command.run({ command: 'tune', args: 'status' } as any)
 
 const START_COUNTS = 'Tracking docs/plans/export.md: 0 of 3 tasks done, 0 of 9 steps.'
 
@@ -157,4 +159,61 @@ test('a session that tracks nothing asks nothing of the clock or the disk', asyn
   expect(sent.text).toBe('go')
   expect(asked).toBe(0)
   expect(world.reads.filter(path => !path.startsWith(`${ROOT}/`))).toEqual([])
+})
+
+test('a wrong path with a line break still answers one line', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+
+  const answer = await tune($, { plan: 'missing\nfile.md' })
+  expect(answer).not.toContain('\n')
+  expect(answer).toContain('missing file.md')
+})
+
+test('/tune status prints the tracked plan', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+  await tick($, 'Open the file')
+
+  const answer = await status($)
+  expect(answer.text).toMatch(/^plan: docs\/plans\/export\.md$/m)
+  expect(answer.text).toMatch(/All tasks.*0 of 3 done · 1 of 9 steps/)
+  expect(answer.text).toMatch(/^▶ 1 Read the file\s.*1\/3/m)
+  expect(answer.isTextDisplayOnly).toBe(true)
+})
+
+test('with nothing tracked it says so', async ($, on) => {
+  fake(on, makeIo())
+  await $.session.start(START)
+
+  expect((await status($)).text).toBe('No plan is tracked.')
+})
+
+test('the tracker item is shown with how long ago it was given', async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md', tracker: { id: 'PROJ-12', title: 'Export to CSV', state: 'In Progress' } })
+
+  await clock.advance(12 * 60000)
+  expect(String((await status($)).text).split('\n')[0]).toBe('PROJ-12 · In Progress · Export to CSV · read 12m ago')
+})
+
+test("status in the panel's command field", async ($, on) => {
+  fake(on, makeIo())
+  await $.session.start(START)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.input({ key: 'command', text: 'status' })
+
+  expect(await words(ui)).toMatch(/No plan is tracked\./)
+  await ui.unmount()
 })
