@@ -2,7 +2,7 @@
 // Each dial value maps to a sentence or two.
 import type { Profile } from './profile'
 
-export const MAX_CHARS = 3000
+export const MAX_CHARS = 4500
 
 /** Goes in front of the brief in the system prompt; not part of its limit. */
 export const GUARD =
@@ -11,6 +11,20 @@ export const GUARD =
 /** The rendered brief would exceed MAX_CHARS. */
 export class BriefTooLong extends Error {}
 
+const ASK_FIRST =
+  'Before you build anything of more than a few steps, make sure you know what is wanted and why. '
+const QUESTIONS: Record<string, string> = {
+  'when-unclear':
+    ASK_FIRST +
+    'Where the request leaves open something that would change what gets built, settle it first ' +
+    'with the tune:shape skill. Where nothing is open, say what you understood in one line and ' +
+    'start. If the person says to just build it, build it.',
+  always:
+    ASK_FIRST +
+    "Shape every job of more than a few steps with the tune:shape skill and get the person's yes " +
+    'before building. If the person says to just build it, build it.',
+  never: 'Ask nothing before building; make the call and say what you chose in one line.',
+}
 const TEAM: Record<string, string> = {
   'when-split':
     'Decide first whether the job needs a team. Use subagents when the work splits into ' +
@@ -28,6 +42,7 @@ const DECISIONS =
   'them into a plan file, and implementers work from that file.'
 // A specialist is named with the kind of work it is for, not in the general list.
 const SPECIALISTS: Record<string, string> = {
+  investigator: 'tune:investigator to read the code and documents around a request before it is shaped or planned',
   debugger: 'tune:debugger for a failure whose cause is not known',
   'security-reviewer':
     'tune:security-reviewer for a change that touches sign-in, permissions, payments or personal data',
@@ -45,6 +60,27 @@ const AGENTS: Record<string, string> = {
     'or the work changes subject.',
 }
 const REVIEW_TAIL = " Reviewers check the diff against the plan, not the implementer's summary."
+// The manager paragraph's Report sentence is the one the reports dial changes.
+const REPORTS: Record<string, string> = {
+  'each-milestone':
+    'Report to the person at each milestone: what is done, what is running, what is next, and ' +
+    'anything that needs them.',
+  'each-task':
+    'Report to the person as each task finishes: what is done, what is running, what is next, ' +
+    'and anything that needs them.',
+  'on-request': 'Report on progress only when asked.',
+}
+const MANAGE_START =
+  'You manage the work, and the person can ask you about it at any time. The plan file is the ' +
+  'record of progress: each task is a heading, each step a checkbox, and whoever does a step ' +
+  'ticks its box as soon as it is done, you included. When work on a plan starts, give its path ' +
+  "to the mcp__tune__progress tool, and give every agent the plan's full path. When you accept a " +
+  'report that left boxes open, tick what was done.'
+const MANAGE_END = 'Answer a question about status at once, from the plan file.'
+const TRACKER =
+  'Where the project has a tracker you can read, such as an issue tracker, name the work by its ' +
+  "item there, use the tracker's words for its state, and pass the item to the progress tool. " +
+  "Change nothing in the tracker unless the project's instructions or the person say to."
 const FIRST: Record<string, string> = {
   correct: 'correct behaviour of what ships comes first',
   time: 'elapsed time comes first',
@@ -119,11 +155,13 @@ export function render(profile: Profile): string {
   const parts = [
     `Tune profile: ${profile.name}. These are the working rules for this machine. ` +
       'The person you are working with changes them with /tune.',
+    QUESTIONS[profile.questions] as string,
     TEAM[profile.team] as string,
   ]
   if (profile.team !== 'never') {
     parts.push(teamList(profile))
   }
+  parts.push(`${MANAGE_START} ${REPORTS[profile.reports]} ${MANAGE_END}`, TRACKER)
   parts.push(`When goals conflict: ${FIRST[first]}, then ${LATER[second]}, then ${LATER[third]}.`)
   for (const text of [profile.tests, profile.notes]) {
     if (text !== '') {

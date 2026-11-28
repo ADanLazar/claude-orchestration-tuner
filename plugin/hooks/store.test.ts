@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
+import { MAX_CHARS } from './brief'
 import { BUILD, copy, makeIo, ownIn } from './kit'
 import { change, create, get, keep, kind, load, names, remove, reset, use } from './store'
 
@@ -115,9 +116,9 @@ test('use puts a profile in force', async () => {
 
 test('a change that makes the brief too long is refused and nothing is saved', async () => {
   const fake = makeIo({ profiles: { fast: FAST } })
-  const message = await refusal(change(fake.io, 'fast', 'notes', 'x'.repeat(3000)))
+  const message = await refusal(change(fake.io, 'fast', 'notes', 'x'.repeat(MAX_CHARS)))
 
-  expect(message).toContain('the limit is 3000')
+  expect(message).toContain(`the limit is ${MAX_CHARS}`)
   expect(fake.writes).toBe(0)
   expect(get(await load(fake.io), 'fast').notes).toBe('')
 })
@@ -235,11 +236,11 @@ test('every write has a stamp no other write has', async () => {
 })
 
 test('an own profile whose rules no longer fit is broken, not put in force', async () => {
-  const long = { ...copy(FAST), notes: 'x'.repeat(3000) }
+  const long = { ...copy(FAST), notes: 'x'.repeat(MAX_CHARS) }
   const fake = makeIo({ profiles: { fast: long }, inForce: 'fast' })
   const world = await load(fake.io)
 
-  expect(world.broken.fast).toContain('the limit is 3000')
+  expect(world.broken.fast).toContain(`the limit is ${MAX_CHARS}`)
   expect(world.inForce).toBe('build')
   expect(await refusal(use(fake.io, 'fast'))).toMatch(/^'fast' cannot be read: /)
 })
