@@ -20,7 +20,6 @@ const QUESTIONS: Record<string, string> = {
     'with the tune:shape skill. Where nothing is open, say what you understood in one line and ' +
     'start. If the person says to just build it, build it.',
   always:
-    ASK_FIRST +
     "Shape every job of more than a few steps with the tune:shape skill and get the person's yes " +
     'before building. If the person says to just build it, build it.',
   never: 'Ask nothing before building; make the call and say what you chose in one line.',

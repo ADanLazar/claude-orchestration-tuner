@@ -7,7 +7,8 @@ Settle what the person wants before you build, with as few questions as the requ
 
 ## First
 
-- If another skill for shaping a request is already in use in this conversation, follow that one and not this.
+- If another skill for shaping a request is in use in this conversation or about to be, follow that one and not this.
+- If your working rules say to ask nothing before building, do not use this skill.
 - If the person says to just build it, stop shaping at once. Say in one line each call you made for them, then build.
 
 ## Read before you ask
@@ -24,7 +25,7 @@ Settle what the person wants before you build, with as few questions as the requ
 
 - Ask only what would change what gets built.
 - One question at a time.
-- For the why, ask an open question.
+- If the why is open, ask it as an open question.
 - Where the choices can be named, name them and say which you recommend.
 
 ## Stop

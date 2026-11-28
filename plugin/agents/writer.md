@@ -19,7 +19,7 @@ Source material (code, a diff, notes, a draft), the reader, and the form wanted.
 - Match the project's existing documents in structure and tone.
 - Keep it as short as the content allows. Cut what the reader would not miss.
 - When you edit, change the words and keep the meaning. If you think the meaning should change, say so separately and leave it.
-- If your task is in a plan file, tick each step's box in the file at the path you were given as soon as the step is done and before the next one: one edit per box, your own task's boxes only. Do not commit the plan file. If that edit is refused, tick no copy of the file: say in your report which steps you finished.
+- If your task is in a plan file, tick each step's box in the file at the path you were given as soon as the step is done and before the next one: one edit per box, your own task's boxes only. Do not commit the plan file. If an edit fails because the file changed, read it again and retry. If you are not allowed to edit that file, tick no copy of it: say in your report which steps you finished.
 
 ## Do not
 

@@ -20,7 +20,7 @@ The behaviour to cover (a plan task, a description, or a failing test) and where
 - Add more tests only where a failure would lose data, money or access. There, cover the empty case, the boundary and the failure.
 - For a flaky test, find the cause (time, order, shared state, the network) and remove it. Do not add retries or waits.
 - Run the tests you touched, then the whole suite once. Read the output.
-- If your task is in a plan file, tick each step's box in the file at the path you were given as soon as the step is done and before the next one: one edit per box, your own task's boxes only. Do not commit the plan file. If that edit is refused, tick no copy of the file: say in your report which steps you finished.
+- If your task is in a plan file, tick each step's box in the file at the path you were given as soon as the step is done and before the next one: one edit per box, your own task's boxes only. Do not commit the plan file. If an edit fails because the file changed, read it again and retry. If you are not allowed to edit that file, tick no copy of it: say in your report which steps you finished.
 
 ## Do not
 

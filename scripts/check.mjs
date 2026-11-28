@@ -27,7 +27,8 @@ const READ_ONLY = new Set(['code-reviewer', 'security-reviewer', 'investigator']
 // Personas that edit and tick a plan's boxes as they go; the planner writes the plan so it can be ticked.
 const TICKERS = ['executor', 'test-engineer', 'writer', 'debugger', 'designer']
 const TICK_START = "- If your task is in a plan file, tick each step's box"
-const PLAN_FORMAT = '- Write each task as a `### Task N: title` heading and each step under it as a `- [ ]` line. Progress is read from those boxes.'
+const TICK_RETRY = 'If an edit fails because the file changed, read it again and retry.'
+const PLAN_FORMAT = '- Write each task as a `### Task N: title` heading and each step under it as a `- [ ]` line. Progress is read from those boxes, so use no other heading inside a task and no checkbox outside one.'
 
 function readJson(file) {
   try {
@@ -123,9 +124,12 @@ for (const name of files) {
     fault(file, 'a persona that only reads must carry "disallowedTools: Write, Edit"')
   }
   const bodyLines = agent.body.split('\n')
-  const ticks = bodyLines.some(line => line.startsWith(TICK_START))
+  const tickLine = bodyLines.find(line => line.startsWith(TICK_START))
+  const ticks = tickLine !== undefined
   if (TICKERS.includes(role) && !ticks) {
     fault(file, 'the line that tells it to tick the plan is missing')
+  } else if (TICKERS.includes(role) && !tickLine.includes(TICK_RETRY)) {
+    fault(file, 'the tick line must tell it to retry an edit that failed because the file changed')
   } else if (!TICKERS.includes(role) && ticks) {
     fault(file, 'only a persona that edits carries the tick line')
   }

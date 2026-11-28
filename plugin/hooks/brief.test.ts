@@ -36,9 +36,11 @@ test('the shipped profile renders the approved words', () => {
 })
 
 test('questions: always and never each have their paragraph', () => {
-  expect(render({ ...copy(BUILD), questions: 'always' })).toContain(
-    'Shape every job of more than a few steps with the tune:shape skill',
+  const always = render({ ...copy(BUILD), questions: 'always' })
+  expect(always).toContain(
+    "Shape every job of more than a few steps with the tune:shape skill and get the person's yes before building. If the person says to just build it, build it.",
   )
+  expect(always).not.toContain('make sure you know what is wanted and why')
 
   const never = render({ ...copy(BUILD), questions: 'never' })
   expect(never).toContain('Ask nothing before building; make the call and say what you chose in one line.')

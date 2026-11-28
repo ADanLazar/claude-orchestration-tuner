@@ -20,7 +20,7 @@ The goal, the decisions (architecture, acceptance criteria, order of work) and w
 - Copy exact values from the decisions: names, limits, wording. An implementer sees only their own task.
 - Mark the tasks where a mistake is expensive: sign-in, permissions, payments, data migrations.
 - Keep it short. A plan longer than the code it describes has written the code.
-- Write each task as a `### Task N: title` heading and each step under it as a `- [ ]` line. Progress is read from those boxes.
+- Write each task as a `### Task N: title` heading and each step under it as a `- [ ]` line. Progress is read from those boxes, so use no other heading inside a task and no checkbox outside one.
 
 ## Do not
 
