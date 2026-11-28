@@ -21,6 +21,8 @@ export const BUILD: Profile = {
   start_higher: ['sign-in', 'permissions', 'payments', 'data migrations'],
   agents: 'fresh-per-task',
   review: 'each-milestone',
+  questions: 'when-unclear',
+  reports: 'each-milestone',
   tests:
     'Tests: roughly one focused test per stated behaviour, and more only where a failure would lose data, money or access. Run the tests for the changed area after each change and the whole suite once before each milestone. Do not keep scratch checks as test files.',
   order: ['correct', 'time', 'tokens'],

@@ -164,7 +164,7 @@ async function handOver($: any, now: View): Promise<string | null> {
 }
 
 // Enough rows for the whole panel where the terminal shows it above the prompt and not at the side.
-const INLINE_ROWS = 34
+const INLINE_ROWS = 36
 
 /** Opens the panel as a person first sees it: nothing is waiting to be confirmed. */
 async function openPane($: any): Promise<void> {
@@ -550,6 +550,28 @@ export const register: Register = on => {
           ]}
           value={profile.review}
           onSelect={set('review', profile.review)}
+        />
+        <Select
+          key="questions"
+          label="questions "
+          options={[
+            { value: 'when-unclear', label: 'when something is open' },
+            { value: 'always', label: 'always' },
+            { value: 'never', label: 'never' },
+          ]}
+          value={profile.questions}
+          onSelect={set('questions', profile.questions)}
+        />
+        <Select
+          key="reports"
+          label="reports   "
+          options={[
+            { value: 'each-milestone', label: 'each milestone' },
+            { value: 'each-task', label: 'each task' },
+            { value: 'on-request', label: 'only when asked' },
+          ]}
+          value={profile.reports}
+          onSelect={set('reports', profile.reports)}
         />
         <Select
           key="escalation"

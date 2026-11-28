@@ -177,3 +177,14 @@ test('list shows a changed shipped profile that cannot be read', async () => {
 
   expect(text).toMatch(/^\* build  \(changed, cannot be read: team/m)
 })
+
+test('show and set know the two new dials', async () => {
+  const { text } = await run(makeIo().io, ['show'])
+  expect(text).toMatch(/^questions\s+when-unclear$/m)
+  expect(text).toMatch(/^reports\s+each-milestone$/m)
+
+  const set = await run(makeIo().io, words('set questions always'))
+  expect(set.text.startsWith('build: questions is now always.')).toBe(true)
+  expect(HELP).toContain('questions')
+  expect(HELP).toContain('reports')
+})

@@ -11,6 +11,8 @@ export type Profile = {
   start_higher: string[]
   agents: string
   review: string
+  questions: string
+  reports: string
   tests: string
   order: string[]
   notes: string

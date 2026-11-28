@@ -12,6 +12,8 @@ export type Profile = {
   start_higher: string[]
   agents: string
   review: string
+  questions: string
+  reports: string
   tests: string
   order: string[]
   notes: string
@@ -22,6 +24,8 @@ export const EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'ma
 export const TEAM: readonly string[] = ['when-split', 'always', 'never']
 export const AGENTS: readonly string[] = ['fresh-per-task', 'may-continue']
 export const REVIEW: readonly string[] = ['each-task', 'each-milestone']
+export const QUESTIONS: readonly string[] = ['when-unclear', 'always', 'never']
+export const REPORTS: readonly string[] = ['each-milestone', 'each-task', 'on-request']
 export const GOALS: readonly string[] = ['correct', 'time', 'tokens']
 
 export const NAME_RE = /^[a-z][a-z0-9-]{0,31}$/
@@ -38,12 +42,14 @@ const KEYS = [
   'start_higher',
   'agents',
   'review',
+  'questions',
+  'reports',
   'tests',
   'order',
   'notes',
 ] as const
 const TEXT = ['summary', 'tests', 'notes'] as const
-const CHOICES: Record<string, readonly string[]> = { team: TEAM, agents: AGENTS, review: REVIEW }
+const CHOICES: Record<string, readonly string[]> = { team: TEAM, agents: AGENTS, review: REVIEW, questions: QUESTIONS, reports: REPORTS }
 const LISTS = ['start_higher', 'order'] as const
 
 /** A profile is missing, unreadable or holds a value Tune does not accept. */
@@ -139,6 +145,8 @@ export function validate(data: unknown): Profile {
     start_higher: [...(areas as string[])],
     agents: data.agents as string,
     review: data.review as string,
+    questions: data.questions as string,
+    reports: data.reports as string,
     tests: data.tests as string,
     order: [...(order as string[])],
     notes: data.notes as string,

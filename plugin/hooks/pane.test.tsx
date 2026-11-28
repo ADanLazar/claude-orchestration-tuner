@@ -418,3 +418,16 @@ test('no letter or digit typed at the panel changes anything', async ($, on) => 
   expect(withKeys).toEqual([])
   await ui.unmount()
 })
+
+test('the rules hold the two new dials', async ($, on) => {
+  const world = makeIo()
+  fake(on, world)
+  await $.session.start(START)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await has(ui, 'Select', 'questions')).toBe(true)
+  expect(await has(ui, 'Select', 'reports')).toBe(true)
+  await ui.select({ key: 'reports', value: 'each-task' })
+  await ui.unmount()
+
+  expect(stored(world).build.reports).toBe('each-task')
+})

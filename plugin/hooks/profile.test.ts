@@ -89,3 +89,31 @@ test('fill refuses what is not a profile at all, or still does not validate', ()
   bad.roles.executor.effort = 'huge'
   expect(failure(() => fill(bad, BUILD))).toMatch(/^roles\.executor\.effort: /)
 })
+
+test('validate names a wrong questions or reports value', () => {
+  expect(failure(() => validate({ ...copy(BUILD), questions: 'sometimes' }))).toBe(
+    'questions: must be one of when-unclear, always, never',
+  )
+  expect(failure(() => validate({ ...copy(BUILD), reports: 'hourly' }))).toBe(
+    'reports: must be one of each-milestone, each-task, on-request',
+  )
+  const missing: Record<string, unknown> = copy(BUILD)
+  delete missing.reports
+  expect(failure(() => validate(missing))).toBe('reports: is missing')
+})
+
+test('setDial changes questions and reports', () => {
+  expect(setDial(BUILD, 'questions', 'never').questions).toBe('never')
+  expect(failure(() => setDial(BUILD, 'reports', 'daily'))).not.toBe('')
+})
+
+test('fill gives a profile saved by 0.1.0 the two dials', () => {
+  const older: Record<string, unknown> = copy(BUILD)
+  delete older.questions
+  delete older.reports
+  const { profile, filled } = fill(older, BUILD)
+
+  expect(profile.questions).toBe('when-unclear')
+  expect(profile.reports).toBe('each-milestone')
+  expect(filled).toEqual(['questions', 'reports'])
+})

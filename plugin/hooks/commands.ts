@@ -16,7 +16,7 @@ export const HELP = [
   '  brief [name]                      the working rules a profile gives',
   '  why [name]                        the reason for each level',
   'Dials: main.model, main.effort, <role> model, <role> effort, team, agents, review,',
-  'escalation (on or off), order, start_higher, summary, tests, notes.',
+  'questions, reports, escalation (on or off), order, start_higher, summary, tests, notes.',
 ].join('\n')
 
 // These take the rest of the line as their value, so they cannot be followed by "in <name>".
@@ -69,6 +69,8 @@ export function show(profile: Profile): string {
     ['team', profile.team],
     ['agents', profile.agents],
     ['review', profile.review],
+    ['questions', profile.questions],
+    ['reports', profile.reports],
     ['escalation', profile.escalation ? 'on' : 'off'],
     ['order', profile.order.join(', ')],
     ['start_higher', profile.start_higher.join(', ') || '(none)'],
