@@ -1,6 +1,6 @@
 {
   "name": "tune",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Role agents at chosen model and effort levels, with a panel to tune them.",
   "author": { "name": "Dan Lazar" },
   "license": "MIT",
