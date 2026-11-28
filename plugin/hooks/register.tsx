@@ -8,7 +8,7 @@ import type { Level, Profile, View } from '../types'
 import { apply } from './apply'
 import { GUARD, render } from './brief'
 import { explain, run } from './commands'
-import { baseName, mdPaths, readPlan, relativeTo, resolvePath, touched } from './plan'
+import { baseName, mdPaths, oneLine, readPlan, relativeTo, resolvePath, touched } from './plan'
 import { EFFORTS, MODELS } from './profile'
 import {
   agentEnded,
@@ -82,8 +82,6 @@ const clip = (text: string, room: number): string =>
 const short = (effort: string): string => (effort === 'medium' ? 'med' : effort)
 const thousands = (tokens: number): string => `${Math.round(tokens / 1000)}K`
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error))
-/** A path as the model gave it, made one line for an answer: control characters become spaces. */
-const oneLine = (text: string): string => text.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 200)
 
 const ORDERS = [
   ['correct', 'time', 'tokens'],
@@ -210,29 +208,40 @@ async function handOver($: any, now: View): Promise<string | null> {
 // Enough rows for the whole panel where the terminal shows it above the prompt and not at the side.
 const INLINE_ROWS = 37
 
-// The re-read under way, or the last one: each starts once the one before has applied its result.
-let rereads: Promise<void> = Promise.resolve()
+// The plan's work under way, or the last: each re-read, and each plan the tool tracks, starts once the
+// one before has applied its result.
+let rereads: Promise<unknown> = Promise.resolve()
+
+/** Runs `work` once the plan's work before it is done, in the order asked. */
+function queued<T>(work: () => Promise<T>): Promise<T> {
+  const next = rereads.then(work)
+  rereads = next.catch(() => undefined)
+
+  return next
+}
 
 /**
  * Reads the tracked plan again and records what changed; `by` names whose edit it was.
  * Re-reads run one at a time, in the order asked. Never throws.
  */
 function reread($: any, by: { agent: string | null; fragment: string; tick: boolean } | null): Promise<void> {
-  const next = rereads.then(() => rereadNow($, by))
-  rereads = next
-
-  return next
+  return queued(() => rereadNow($, by))
 }
 
 /** One re-read. Nothing is read, and the clock is not asked, when no plan is tracked. Never throws. */
 async function rereadNow($: any, by: { agent: string | null; fragment: string; tick: boolean } | null): Promise<void> {
   try {
-    const { plan, anywhere } = await read($, progress)
+    const { plan, anywhere, real: pinned } = await read($, progress)
     if (plan === null) {
       return
     }
-    // A plan the model named is checked again: it may have become a link to a file outside.
-    const real = anywhere ? plan : await insideProject($, plan)
+    // A plan the model named is checked again: it may have become a link to a file outside. A plan the
+    // person named is read only while the file found then is still its own real path.
+    const real = anywhere
+      ? typeof pinned === 'string' && (await landing($, pinned)) === pinned
+        ? pinned
+        : null
+      : await insideProject($, plan)
     let text: string
     try {
       if (real === null) {
@@ -271,6 +280,10 @@ async function landing($: any, path: string): Promise<string | null | undefined>
   }
 }
 
+/** Whether an already resolved path, as spelled, is a .md file under the folder `base`: no disk access. */
+const spelledInside = (base: string, path: string): boolean =>
+  path.startsWith(`${base}/`) && path.length > base.length + 1 && /\.md$/i.test(path)
+
 /**
  * Where an already resolved path really lands when it is a .md file inside the session's folder, and
  * null when it is not: by its spelling first (no disk access), then by where it lands. A path that leads
@@ -279,7 +292,7 @@ async function landing($: any, path: string): Promise<string | null | undefined>
  */
 async function insideProject($: any, path: string): Promise<string | null> {
   const base = resolvePath(String(await $.session.cwd()), '')
-  if (!path.startsWith(`${base}/`) || path.length === base.length + 1 || !/\.md$/i.test(path)) {
+  if (!spelledInside(base, path)) {
     return null
   }
   const root = await landing($, base)
@@ -323,41 +336,51 @@ async function answerTool($: any, input: Record<string, unknown>, anywhere = fal
       return 'tune: tracker needs an id. Nothing was changed.'
     }
   }
-  let found: { path: string; label: string; tasks: ReturnType<typeof readPlan> } | null = null
-  if (plan !== null) {
-    const cwd = String(await $.session.cwd())
-    const path = resolvePath(cwd, plan)
-    const real = anywhere ? path : await insideProject($, path)
-    if (real === null) {
-      return `tune: ${oneLine(plan)} is not a .md file inside this project. To track it, ask the person to type /tune track <path>. Nothing was changed.`
+  // The check, the read and the change run as one in the plan's queue: an older re-read is not applied after them.
+  return queued(async () => {
+    let found: { path: string; label: string; tasks: ReturnType<typeof readPlan>; real: string } | null = null
+    if (plan !== null) {
+      const cwd = String(await $.session.cwd())
+      const path = resolvePath(cwd, plan)
+      // Decided by the spelling alone. Past it every failure answers alike, so that the answer does not
+      // tell whether a file outside exists.
+      if (!anywhere && !spelledInside(resolvePath(cwd, ''), path)) {
+        return `tune: ${oneLine(plan, 200)} is not a .md file inside this project. To track it, ask the person to type /tune track <path>. Nothing was changed.`
+      }
+      const unread = `tune: ${oneLine(plan, 200)} could not be read. Nothing was changed.`
+      // A plan the person names is pinned to the file it lands on now.
+      const real = anywhere ? await landing($, path) : await insideProject($, path)
+      if (typeof real !== 'string') {
+        return unread
+      }
+      let text: string
+      try {
+        text = String(await $.fs.read(real))
+      } catch {
+        return unread
+      }
+      const tasks = readPlan(text, baseName(path))
+      if (tasks.length === 0) {
+        return `tune: ${oneLine(plan, 200)} has no task with a checkbox. Nothing was changed.`
+      }
+      found = { path, label: oneLine(relativeTo(cwd, path), 200), tasks, real }
     }
-    let text: string
-    try {
-      text = String(await $.fs.read(real))
-    } catch {
-      return `tune: ${oneLine(plan)} could not be read. Nothing was changed.`
-    }
-    const tasks = readPlan(text, baseName(path))
-    if (tasks.length === 0) {
-      return `tune: ${oneLine(plan)} has no task with a checkbox. Nothing was changed.`
-    }
-    found = { path, label: relativeTo(cwd, path), tasks }
-  }
-  // Applied to the state as it is now: an agent's start or a tick seen while this was reading stays.
-  const done = await update($, progress, now => {
-    let state = now
-    if (input.tracker !== undefined) {
-      state = setTracker(state, input.tracker, at)
-    }
-    if (found !== null) {
-      state = track(state, found.path, found.label, found.tasks, anywhere)
-    }
+    // Applied to the state as it is now: an agent's start or a tick seen while this was reading stays.
+    const done = await update($, progress, now => {
+      let state = now
+      if (input.tracker !== undefined) {
+        state = setTracker(state, input.tracker, at)
+      }
+      if (found !== null) {
+        state = track(state, found.path, found.label, found.tasks, anywhere, found.real)
+      }
 
-    return state
+      return state
+    })
+    const said = summary(shown(done, 0))
+
+    return input.tracker !== undefined && done.tracker !== null ? `Tracker item ${done.tracker.id} noted. ${said}` : said
   })
-  const said = summary(shown(done, 0))
-
-  return input.tracker !== undefined && done.tracker !== null ? `Tracker item ${done.tracker.id} noted. ${said}` : said
 }
 
 /** What `track …` answers, from /tune or the panel's field; null when the words are not a track command. */
@@ -463,10 +486,10 @@ function startPoll($: any): void {
   }
 }
 
-/** Tracks the first .md file inside the project that an agent's prompt names and that holds a task. */
+/** Tracks the first .md file inside the project that an agent's prompt names and that holds a task; of the first five. */
 async function trackFromPrompt($: any, prompt: string): Promise<void> {
   const cwd = String(await $.session.cwd())
-  for (const named of mdPaths(prompt)) {
+  for (const named of mdPaths(prompt).slice(0, 5)) {
     const path = resolvePath(cwd, named)
     const real = await insideProject($, path)
     if (real === null) {
@@ -480,20 +503,30 @@ async function trackFromPrompt($: any, prompt: string): Promise<void> {
     }
     const tasks = readPlan(text, baseName(path))
     if (tasks.length > 0) {
-      await update($, progress, now => (now.plan === null ? track(now, path, relativeTo(cwd, path), tasks) : now))
+      const label = oneLine(relativeTo(cwd, path), 200)
+      await update($, progress, now => (now.plan === null ? track(now, path, label, tasks, false, real) : now))
 
       return
     }
   }
 }
 
-/** Whether the engine lists the agent in another folder than the session's: a worktree of its own. */
+/**
+ * Whether the engine lists the agent in another folder than the session's: a worktree of its own.
+ * The folders are compared where they really land, or as spelled when either cannot be told.
+ */
 async function elsewhere($: any, id: string): Promise<boolean> {
   try {
     const agent = (await $.agent.list()).find((one: any) => one.id === id)
     const cwd = resolvePath(String(await $.session.cwd()), '')
+    if (typeof agent?.cwd !== 'string') {
+      return false
+    }
+    const folder = resolvePath(cwd, agent.cwd)
+    const here = await landing($, cwd)
+    const there = await landing($, folder)
 
-    return typeof agent?.cwd === 'string' && resolvePath(cwd, agent.cwd) !== cwd
+    return typeof here === 'string' && typeof there === 'string' ? here !== there : folder !== cwd
   } catch {
     return false
   }

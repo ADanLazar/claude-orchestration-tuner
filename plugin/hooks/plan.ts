@@ -21,7 +21,7 @@ const FENCE = /^[ \t]*(`{3,}|~{3,})/
 const NUMBERED = /^task\s+(\d+)/i
 
 // A checkout on Windows may hold \r\n, and an editor there may add a byte-order mark.
-const plain = (text: string): string => text.replace(/^﻿/, '').replace(/\r\n/g, '\n')
+const plain = (text: string): string => text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
 
 export function readPlan(text: string, fileName: string): Task[] {
   const lines = plain(text).split('\n')
@@ -120,6 +120,11 @@ export function resolvePath(cwd: string, path: string): string {
 export function relativeTo(cwd: string, path: string): string {
   const base = cwd.replace(/[\\/]+$/, '')
   return path.startsWith(`${base}/`) ? path.slice(base.length + 1) : path
+}
+
+/** Text echoed on one line: control characters and line separators become spaces, and it is cut to `max`. */
+export function oneLine(text: string, max: number): string {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').slice(0, max)
 }
 
 export function baseName(path: string): string {

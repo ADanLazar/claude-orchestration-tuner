@@ -275,27 +275,47 @@ export function fake(on: any, world: FakeIo): void {
   on('store.set', (_: unknown, e: any) => answer(world.io.set(e.key, e.value)))
   on('store.keys', () => answer(world.io.keys()))
   on('store.delete', (_: unknown, e: any) => answer(world.io.drop(e.key)))
+  // Where a path lands: each part of it that world.links names is replaced by its target.
+  const resolve = (path: string): string => {
+    let out = ''
+    for (const part of path.split('/').filter(each => each !== '')) {
+      out = `${out}/${part}`
+      for (let hops = 0; out in world.links && hops < 40; hops += 1) {
+        out = String(world.links[out]).replace(/\/+$/, '')
+      }
+    }
+
+    return out === '' ? '/' : out
+  }
   on('fs.read', (_: unknown, e: any) => {
     // Recorded as served: a read of the plugin's real folder is recorded under ROOT.
     const path = local(String(e.path))
     world.reads.push(path)
-    const read = answer(world.io.read(path))
+    // A real path that is not a key is served from the key that lands on it.
+    const key = path in world.files ? path : (Object.keys(world.files).find(each => resolve(each) === path) ?? path)
+    const read = answer(world.io.read(key))
 
     return world.onRead === undefined ? read : Promise.resolve(world.onRead(path)).then(() => read)
   })
   // A key of world.files is a file, landing where world.links says or on itself; a folder above one is a
-  // directory; anything else leads nowhere, and the call rejects as the engine's does for a missing path.
+  // directory. A link whose target is neither leads nowhere (`other`, no real path); anything else is
+  // missing, and the call rejects as the engine's does for a missing path.
   on('fs.stat', (_: unknown, e: any) => {
-    const path = local(String(e.path))
-    const real = (where: string) => (e.resolve ? { realPath: where } : {})
-    if (path in world.files) {
-      const size = world.files[path]?.length ?? 0
-
-      return { value: { kind: 'file', size, mtimeMs: 0, isLink: path in world.links, ...real(world.links[path] ?? path) } }
+    const path = local(String(e.path)).replace(/(.)\/+$/, '$1')
+    const where = resolve(path)
+    const real = e.resolve ? { realPath: where } : {}
+    const keys = Object.keys(world.files)
+    const isLink = path in world.links
+    const fileKey = path in world.files ? path : keys.find(key => key === where || resolve(key) === where)
+    if (fileKey !== undefined) {
+      return { value: { kind: 'file', size: world.files[fileKey]?.length ?? 0, mtimeMs: 0, isLink, ...real } }
     }
-    const folder = path.replace(/\/+$/, '')
-    if (Object.keys(world.files).some(key => key.startsWith(`${folder}/`))) {
-      return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false, ...real(folder) } }
+    const under = (folder: string) => keys.some(key => key.startsWith(`${folder}/`) || resolve(key).startsWith(`${folder}/`))
+    if (under(path) || under(where)) {
+      return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink, ...real } }
+    }
+    if (isLink) {
+      return { value: { kind: 'other', size: 0, mtimeMs: 0, isLink } }
     }
 
     return { deny: `stat ${path} failed: ENOENT` }

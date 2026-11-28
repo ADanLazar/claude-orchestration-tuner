@@ -317,6 +317,14 @@ test('who tracked the plan is kept', () => {
   expect(clear(track(NOTHING, PATH, 'export.md', plan, true)).anywhere).toBe(false)
 })
 
+test('the real path is kept, and clear forgets it', () => {
+  const plan = tasks('   ', '    ', '  ')
+
+  expect(track(NOTHING, PATH, 'export.md', plan).real).toBe(null)
+  expect(track(NOTHING, PATH, 'export.md', plan, true, '/real/export.md').real).toBe('/real/export.md')
+  expect(clear(track(NOTHING, PATH, 'export.md', plan, true, '/real/export.md')).real).toBe(null)
+})
+
 test('a task may be named like a built-in', () => {
   const plan = (one: string, two: string): Task[] =>
     readPlan(['## constructor', ...boxes(one), '', '## __proto__', ...boxes(two)].join('\n'), 'odd.md')

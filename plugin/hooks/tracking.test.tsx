@@ -221,6 +221,7 @@ test("status in the panel's command field", async ($, on) => {
 const OUTSIDE = '/elsewhere/plan.md'
 const refusal = (plan: string): string =>
   `tune: ${plan} is not a .md file inside this project. To track it, ask the person to type /tune track <path>. Nothing was changed.`
+const unread = (plan: string): string => `tune: ${plan} could not be read. Nothing was changed.`
 const track = async ($: any, args: string, origin: Record<string, unknown> = { kind: 'composer' }): Promise<any> =>
   $.command.run({ command: 'tune', args, origin } as any)
 
@@ -276,9 +277,29 @@ test('a link inside the folder that leads outside is refused', async ($, on) => 
   fake(on, world)
   await $.session.start(START)
 
-  expect(await tune($, { plan: 'docs/plans/link.md' })).toBe(refusal('docs/plans/link.md'))
+  expect(await tune($, { plan: 'docs/plans/link.md' })).toBe(unread('docs/plans/link.md'))
   expect(await tune($)).toBe('No plan is tracked.')
   expect(world.reads).not.toContain('/work/docs/plans/link.md')
+})
+
+test('a link that leads outside answers like a missing file, whether or not its target exists', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  world.files[OUTSIDE] = PLAN_TEXT
+  world.links['/work/docs/plans/a.md'] = OUTSIDE
+  world.links['/work/docs/plans/b.md'] = '/elsewhere/none.md'
+  fake(on, world)
+  await $.session.start(START)
+
+  const there = await tune($, { plan: 'docs/plans/a.md' })
+  const missing = await tune($, { plan: 'docs/plans/b.md' })
+  expect(missing).toBe(there.replace('docs/plans/a.md', 'docs/plans/b.md'))
+  expect(there).toBe(unread('docs/plans/a.md'))
+  expect(there).not.toContain('/tune track')
+  expect(missing).not.toContain('/tune track')
+  expect(await tune($)).toBe('No plan is tracked.')
+  expect(world.reads.filter(path => path.startsWith('/elsewhere/'))).toEqual([])
 })
 
 test('a file that is not .md is refused', async ($, on) => {
@@ -615,6 +636,55 @@ test('a plan the person tracked anywhere is still re-read', async ($, on) => {
   expect(await tune($)).toContain('3 of 9 steps')
 })
 
+test('a plan the person tracked is not followed to another file', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[OUTSIDE] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  expect((await track($, `track ${OUTSIDE}`)).text).toContain('0 of 9 steps')
+
+  world.links[OUTSIDE] = '/secret/notes.md'
+  world.files['/secret/notes.md'] = ticked(PLAN_TEXT, 'Open the file', 'Parse the rows', 'Report bad rows', 'Write the header')
+  await $.prompt.submit({ text: 'go' } as any)
+  expect(await tune($)).toBe(
+    'Tracking /elsewhere/plan.md: 0 of 3 tasks done, 0 of 9 steps. The plan file could not be read; these are the last counts.',
+  )
+  expect(world.reads.filter(path => path.startsWith('/secret/'))).toEqual([])
+})
+
+test('the same folder under two spellings is not apart', async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  world.links['/work'] = '/private/work'
+  world.spawnCwd = '/private/work'
+  fake(on, world)
+  await $.session.start(START)
+  expect(await tune($, { plan: 'docs/plans/export.md' })).toBe(START_COUNTS)
+
+  await spawn($, ON_TASK_1)
+  const tickAs = (step: string) =>
+    $.tool.call({ tool: 'Edit', file_path: PLAN_PATH, old_string: `- [ ] ${step}`, new_string: `- [x] ${step}`, agentId: 'a1' } as any)
+  await clock.set(10000)
+  await tickAs('Open the file')
+  await clock.set(20000)
+  await tickAs('Parse the rows')
+  const row = (await statusOf($)).split('\n').find(line => line.startsWith('▶ 1 Read the file')) ?? ''
+  expect(row).toMatch(/2\/3.*~\S+ left/)
+})
+
+test('at most five paths of a prompt are checked', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+
+  await spawn($, 'Read docs/a.md docs/b.md docs/c.md docs/d.md docs/e.md, then do Task 1 of docs/plans/export.md')
+  expect((await statusOf($)).split('\n')[0]).toBe('No plan is tracked.')
+})
+
 const SESSION_END = { reason: 'clear', sessionId: 'session-1', resume: { id: 'session-1' } } as const
 const plansRead = (world: { reads: string[] }): number => world.reads.filter(path => path === PLAN_PATH).length
 
@@ -666,6 +736,36 @@ test('re-reads do not overtake each other', async ($, on) => {
   const after = await statusOf($)
   expect(after).toMatch(/^▶ 1 Read the file.*1\/3/m)
   expect(after).toContain('1 of 9 steps')
+  await clock.advance(2000)
+  expect(await statusOf($)).toContain('1 of 9 steps')
+})
+
+test('a re-track is not overtaken by an older re-read', async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+  await spawn($, ON_TASK_1)
+
+  let release = () => {}
+  const held = new Promise<void>(done => (release = done))
+  let first = true
+  world.onRead = async path => {
+    if (path === PLAN_PATH && first) {
+      first = false
+      await held
+    }
+  }
+  await clock.advance(2000)
+  world.files[PLAN_PATH] = ticked(PLAN_TEXT, 'Open the file')
+  const again = tune($, { plan: 'docs/plans/export.md' })
+  await clock.settle()
+  release()
+  await again
+  await clock.settle()
+  expect(await statusOf($)).toContain('1 of 9 steps')
   await clock.advance(2000)
   expect(await statusOf($)).toContain('1 of 9 steps')
 })

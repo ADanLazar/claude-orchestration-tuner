@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { baseName, linkByPrompt, mdPaths, readPlan, relativeTo, resolvePath, touched } from './plan'
+import { baseName, linkByPrompt, mdPaths, oneLine, readPlan, relativeTo, resolvePath, touched } from './plan'
 
 const PLAN = [
   '# Export to CSV',
@@ -111,4 +111,9 @@ test('paths resolve, shorten and give their file name', () => {
   expect(relativeTo('/work', '/work/docs/a.md')).toBe('docs/a.md')
   expect(relativeTo('/work', '/else/a.md')).toBe('/else/a.md')
   expect(baseName('/work/docs/a.md')).toBe('a.md')
+})
+
+test('echoed text is one line, and cut', () => {
+  expect(oneLine('a\nb c\u0085d\te', 20)).toBe('a b c d e')
+  expect(oneLine('x'.repeat(300), 200)).toBe('x'.repeat(200))
 })

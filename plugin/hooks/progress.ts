@@ -1,7 +1,7 @@
 // What a session knows about a plan's progress: which plan is tracked, which
 // agent is on which task, and how each task stands. Plain data changed by pure
 // functions: no function here changes its input, reads a clock or a file.
-import { linkByPrompt, TICKERS } from './plan'
+import { linkByPrompt, oneLine, TICKERS } from './plan'
 import type { Task } from './plan'
 
 export { TICKERS } from './plan'
@@ -29,8 +29,10 @@ export type Progress = {
   plan: string | null
   label: string
   unread: boolean
-  /** Tracked by the person's own command, who may name a plan anywhere: it is re-read without the check. */
+  /** Tracked by the person's own command, who may name a plan anywhere: it is re-read without the folder check, from `real` only. */
   anywhere: boolean
+  /** Where the plan really lands, links followed, as found when it was tracked. */
+  real: string | null
   tasks: Task[]
   marks: Record<string, Mark>
   agents: AgentRun[]
@@ -38,7 +40,7 @@ export type Progress = {
 }
 export type TaskState = 'waiting' | 'running' | 'done' | 'to check' | 'stopped'
 
-export const NOTHING: Progress = { plan: null, label: '', unread: false, anywhere: false, tasks: [], marks: {}, agents: [], tracker: null }
+export const NOTHING: Progress = { plan: null, label: '', unread: false, anywhere: false, real: null, tasks: [], marks: {}, agents: [], tracker: null }
 
 // Marks and counts are keyed by heading text, and a heading may be `constructor` or `__proto__`:
 // every read is of an own key, and every write builds the object.
@@ -84,9 +86,16 @@ const resumed = (marks: Record<string, Mark>, id: string, now: number): Record<s
     }),
   )
 
-export function track(state: Progress, plan: string, label: string, tasks: Task[], anywhere = false): Progress {
+export function track(
+  state: Progress,
+  plan: string,
+  label: string,
+  tasks: Task[],
+  anywhere = false,
+  real: string | null = null,
+): Progress {
   const marks = plan === state.plan ? kept(state.marks, tasks) : {}
-  return { ...state, plan, label, unread: false, anywhere, tasks, marks }
+  return { ...state, plan, label, unread: false, anywhere, real, tasks, marks }
 }
 
 export function clear(state: Progress): Progress {
@@ -98,17 +107,16 @@ export function unreadable(state: Progress): Progress {
 }
 
 // Line breaks and other control characters, which would break the one line the item is shown on.
-const oneLine = (value: unknown, max: number): string =>
-  typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').slice(0, max) : ''
+const part = (value: unknown, max: number): string => (typeof value === 'string' ? oneLine(value, max) : '')
 const finite = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
 
 export function setTracker(state: Progress, item: unknown, now: number): Progress {
   const given = typeof item === 'object' && item !== null ? (item as Record<string, unknown>) : null
   if (given === null || typeof given.id !== 'string' || given.id === '') throw new Error('tracker needs an id')
   const tracker: Tracker = {
-    id: oneLine(given.id, 40),
-    title: oneLine(given.title, 80),
-    state: oneLine(given.state, 30),
+    id: part(given.id, 40),
+    title: part(given.title, 80),
+    state: part(given.state, 30),
     done: finite(given.done),
     total: finite(given.total),
     at: now,
