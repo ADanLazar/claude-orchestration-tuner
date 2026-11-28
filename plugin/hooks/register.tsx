@@ -8,9 +8,22 @@ import type { Level, Profile, View } from '../types'
 import { apply } from './apply'
 import { GUARD, render } from './brief'
 import { explain, run } from './commands'
-import { baseName, readPlan, relativeTo, resolvePath, touched } from './plan'
+import { baseName, mdPaths, readPlan, relativeTo, resolvePath, touched } from './plan'
 import { EFFORTS, MODELS } from './profile'
-import { clear, lines, NOTHING, observe, setTracker, shown, summary, track, unreadable } from './progress'
+import {
+  agentEnded,
+  agentStarted,
+  clear,
+  isRunning,
+  lines,
+  NOTHING,
+  observe,
+  setTracker,
+  shown,
+  summary,
+  track,
+  unreadable,
+} from './progress'
 import { change, create, get, has, keep, kind, load, names, remove, reset, use } from './store'
 import type { Io } from './store'
 
@@ -348,6 +361,95 @@ async function statusText($: any, width: number): Promise<string> {
   return lines(shown(state, await $.clock.now(), await levelsOf($)), width).join('\n')
 }
 
+// While an agent runs, the plan is read again this often: edits made through a shell are seen too.
+const POLL_MS = 2000
+// The one re-read timer: going only while an agent runs.
+let poll: { cancel: () => void } | null = null
+
+function stopPoll(): void {
+  const timer = poll
+  poll = null
+  try {
+    timer?.cancel()
+  } catch {
+    // A timer that cannot be stopped ends with its session.
+  }
+}
+
+/** One period of the re-read: the plan, then each running agent as the engine lists it. Never throws. */
+async function pollOnce($: any): Promise<void> {
+  try {
+    if (!isRunning(await read($, progress))) {
+      stopPoll()
+
+      return
+    }
+    await reread($, null)
+    const listed: any[] = await $.agent.list()
+    const at = await $.clock.now()
+    await update($, progress, now => {
+      let next = now
+      for (const run of now.agents) {
+        if (run.endedAt !== null) {
+          continue
+        }
+        // A run the list no longer holds ended without a report: it reads `to check`.
+        const status = listed.find(agent => agent.id === run.id)?.taskStatus ?? 'completed'
+        if (status === 'completed' || status === 'failed') {
+          next = agentEnded(next, run.id, status, at)
+        } else if (status === 'killed') {
+          next = agentEnded(next, run.id, 'stopped', at)
+        }
+      }
+
+      return next
+    })
+  } catch {
+    // The next period tries again.
+  }
+}
+
+function startPoll($: any): void {
+  if (poll === null) {
+    poll = $.clock.every(POLL_MS, () => pollOnce($))
+  }
+}
+
+/** Tracks the first .md file inside the project that an agent's prompt names and that holds a task. */
+async function trackFromPrompt($: any, prompt: string): Promise<void> {
+  const cwd = String(await $.session.cwd())
+  for (const named of mdPaths(prompt)) {
+    const path = resolvePath(cwd, named)
+    if (!(await insideProject($, path))) {
+      continue
+    }
+    let text: string
+    try {
+      text = String(await $.fs.read(path))
+    } catch {
+      continue
+    }
+    const tasks = readPlan(text, baseName(path))
+    if (tasks.length > 0) {
+      await update($, progress, now => (now.plan === null ? track(now, path, relativeTo(cwd, path), tasks) : now))
+
+      return
+    }
+  }
+}
+
+/** Whether the engine lists the agent in another folder than the session's: a worktree of its own. */
+async function elsewhere($: any, id: string): Promise<boolean> {
+  try {
+    const agent = (await $.agent.list()).find((one: any) => one.id === id)
+    const cwd = resolvePath(String(await $.session.cwd()), '')
+
+    return typeof agent?.cwd === 'string' && resolvePath(cwd, agent.cwd) !== cwd
+  } catch {
+    return false
+  }
+}
+
 /** Opens the panel as a person first sees it: nothing is waiting to be confirmed. */
 async function openPane($: any): Promise<void> {
   await update($, confirm, () => null)
@@ -401,6 +503,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     told.clear()
+    stopPoll()
     try {
       await $.command.register({
         name: 'tune',
@@ -491,6 +594,48 @@ export const register: Register = on => {
       }
     } catch {
       // Never stand between a tool and its answer.
+    }
+
+    return answer
+  })
+
+  // The agent is recorded when it starts, on the task its prompt names; a plan its prompt names is tracked when none is.
+  on('agent.spawn', async ($, e, next) => {
+    const answer = await next(e)
+    try {
+      if ((await read($, progress)).plan === null) {
+        await trackFromPrompt($, e.prompt)
+      }
+      if (typeof answer.agentId === 'string') {
+        const id = answer.agentId
+        // An agent in a worktree of its own ticks a copy of the plan, which this session does not read.
+        // The engine's types give the spawn no `isolation`, and a real one came without it: its folder decides too.
+        const apart = (e as { isolation?: unknown }).isolation === 'worktree' || (await elsewhere($, id))
+        const at = await $.clock.now()
+        await update($, progress, now => agentStarted(now, { id, type: e.subagentType, prompt: e.prompt, apart }, at))
+        startPoll($)
+      }
+    } catch {
+      // Never stand between an agent and its start.
+    }
+
+    return answer
+  })
+
+  on('agent.report', async ($, e, next) => {
+    const answer = await next(e)
+    try {
+      // An agent this session never saw start asks nothing of the clock.
+      if ((await read($, progress)).agents.some(run => run.id === e.agentId)) {
+        const at = await $.clock.now()
+        await update($, progress, now => agentEnded(now, e.agentId, e.status, at))
+        await reread($, null)
+        if (!isRunning(await read($, progress))) {
+          stopPoll()
+        }
+      }
+    } catch {
+      // Never stand between a report and the one it is for.
     }
 
     return answer

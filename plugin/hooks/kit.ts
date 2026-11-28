@@ -104,6 +104,8 @@ export type FakeIo = {
   reads: string[]
   /** How many agents the stand-in `agent.spawn` started. */
   spawned: number
+  /** The folder the stand-in `agent.spawn` lists a started agent in; `cwd` when not set. */
+  spawnCwd?: string
 }
 
 /**
@@ -330,7 +332,7 @@ export function fake(on: any, world: FakeIo): void {
       taskStatus: 'running',
       model: 'claude-sonnet-5-5',
       effort: 'medium',
-      cwd: world.cwd,
+      cwd: world.spawnCwd ?? world.cwd,
       startTime: 0,
     })
 
