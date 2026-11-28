@@ -224,8 +224,47 @@ async function reread($: any, by: { agent: string | null; fragment: string } | n
   }
 }
 
-/** What the tool answers: one line. The summary holds counts only, so it needs no time. */
-async function answerTool($: any, input: Record<string, unknown>): Promise<string> {
+/** Where a path really lands, links followed: null when it leads nowhere, undefined when that cannot be told. */
+async function landing($: any, path: string): Promise<string | null | undefined> {
+  try {
+    const stat = await $.fs.stat(path, { resolve: true })
+
+    return typeof stat.realPath === 'string' ? stat.realPath.replace(/\\/g, '/').replace(/\/+$/, '') : undefined
+  } catch (error) {
+    return / failed: ENOENT$/.test(reason(error)) ? null : undefined
+  }
+}
+
+/**
+ * Whether an already resolved path is a .md file inside the session's folder, by its spelling first
+ * (no disk access) and then by where it really lands. A path that leads nowhere counts as inside when
+ * the nearest folder above it that is there lands inside.
+ */
+async function insideProject($: any, path: string): Promise<boolean> {
+  const base = resolvePath(String(await $.session.cwd()), '')
+  if (!path.startsWith(`${base}/`) || path.length === base.length + 1 || !/\.md$/i.test(path)) {
+    return false
+  }
+  const root = await landing($, base)
+  if (typeof root !== 'string' || root === '') {
+    return false
+  }
+  for (let at = path, own = true; ; at = at.slice(0, at.lastIndexOf('/')), own = false) {
+    const real = at === base ? root : await landing($, at)
+    if (real === undefined) {
+      return false
+    }
+    if (real !== null) {
+      return real.startsWith(`${root}/`) || (!own && real === root)
+    }
+  }
+}
+
+/**
+ * What the tool answers: one line. The summary holds counts only, so it needs no time.
+ * Only the person's own command (`anywhere`) tracks a plan outside the project or not named .md.
+ */
+async function answerTool($: any, input: Record<string, unknown>, anywhere = false): Promise<string> {
   if (input.clear === true) {
     await update($, progress, now => clear(now))
 
@@ -247,6 +286,9 @@ async function answerTool($: any, input: Record<string, unknown>): Promise<strin
   if (plan !== null) {
     const cwd = String(await $.session.cwd())
     const path = resolvePath(cwd, plan)
+    if (!anywhere && !(await insideProject($, path))) {
+      return `tune: ${oneLine(plan)} is not a .md file inside this project. To track it, ask the person to type /tune track <path>. Nothing was changed.`
+    }
     let text: string
     try {
       text = String(await $.fs.read(path))
@@ -264,6 +306,22 @@ async function answerTool($: any, input: Record<string, unknown>): Promise<strin
   const said = summary(shown(done, 0))
 
   return input.tracker !== undefined && done.tracker !== null ? `Tracker item ${done.tracker.id} noted. ${said}` : said
+}
+
+/** What `track …` answers, from /tune or the panel's field; null when the words are not a track command. */
+async function trackCommand($: any, typed: string, anywhere: boolean): Promise<string | null> {
+  const words = splitWords(typed)
+  if (words[0] !== 'track') {
+    return null
+  }
+  if (words.length === 1) {
+    return 'Usage: /tune track <path> shows progress for a plan file, wherever it is; /tune track off stops.'
+  }
+  if (words.length === 2 && words[1] === 'off') {
+    return answerTool($, { clear: true })
+  }
+
+  return answerTool($, { plan: typed.trim().replace(/^track\s+/, '') }, anywhere)
 }
 
 /** Each agent's id, mapped to the level it runs at: `sonnet-5-5 / medium`. `{}` when the list cannot be had. */
@@ -456,6 +514,11 @@ export const register: Register = on => {
         // For the person alone: no model call, and the text stays out of later requests.
         return { text: await statusText($, Math.min(e.presentation?.columns ?? 80, 100)), isTextDisplayOnly: true as const }
       }
+      // A plan outside the project is tracked only at the person's own Enter, at the terminal or through the bridge.
+      const tracked = await trackCommand($, e.args, e.origin?.kind === 'composer' || e.origin?.kind === 'bridge')
+      if (tracked !== null) {
+        return { text: tracked }
+      }
       const answer = await run(ioOf($), words)
       await update($, message, () => answer.text)
       if (!answer.changed) {
@@ -544,6 +607,14 @@ export const register: Register = on => {
           if (typed.length === 1 && typed[0] === 'status') {
             const text = await statusText($, e.props.bodyColumns)
             await update($, message, () => text)
+            await update($, confirm, () => null)
+
+            return
+          }
+          // The field is typed by the person.
+          const tracked = await trackCommand($, value, true)
+          if (tracked !== null) {
+            await update($, message, () => tracked)
             await update($, confirm, () => null)
 
             return

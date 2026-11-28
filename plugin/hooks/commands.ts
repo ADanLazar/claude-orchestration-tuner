@@ -16,6 +16,8 @@ export const HELP = [
   '  brief [name]                      the working rules a profile gives',
   '  why [name]                        the reason for each level',
   '  status                            the tracked plan\'s progress, as text',
+  '  track <path>                      show progress for a plan file, wherever it is',
+  '  track off                         stop showing progress',
   'Dials: main.model, main.effort, <role> model, <role> effort, team, agents, review,',
   'questions, reports, escalation (on or off), order, start_higher, summary, tests, notes.',
 ].join('\n')

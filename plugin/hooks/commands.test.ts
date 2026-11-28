@@ -192,3 +192,8 @@ test('show and set know the two new dials', async () => {
 test('HELP names status', () => {
   expect(HELP).toContain('status')
 })
+
+test('HELP names track', () => {
+  expect(HELP).toContain('track <path>')
+  expect(HELP).toContain('track off')
+})

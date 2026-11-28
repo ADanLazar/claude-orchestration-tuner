@@ -75,6 +75,8 @@ export type FakeIo = {
   store: Record<string, unknown>
   /** What the plugin folder holds, by path. */
   files: Record<string, string>
+  /** A file that is a symbolic link, by path: where it really lands, for `$.fs.stat`. */
+  links: Record<string, string>
   /** Every agent spec registered, in order. */
   registered: Record<string, unknown>[]
   /** Paths whose read rejects, and agent names whose registration rejects. */
@@ -125,6 +127,7 @@ export function makeIo(seed: Record<string, unknown> = {}): FakeIo {
       [`${ROOT}/profiles/build.json`]: JSON.stringify(BUILD),
       [`${ROOT}/notes.json`]: JSON.stringify(NOTES),
     },
+    links: {},
     registered: [],
     failRead: new Set(),
     failRegister: new Set(),
@@ -273,6 +276,23 @@ export function fake(on: any, world: FakeIo): void {
     world.reads.push(path)
 
     return answer(world.io.read(path))
+  })
+  // A key of world.files is a file, landing where world.links says or on itself; a folder above one is a
+  // directory; anything else leads nowhere, and the call rejects as the engine's does for a missing path.
+  on('fs.stat', (_: unknown, e: any) => {
+    const path = local(String(e.path))
+    const real = (where: string) => (e.resolve ? { realPath: where } : {})
+    if (path in world.files) {
+      const size = world.files[path]?.length ?? 0
+
+      return { value: { kind: 'file', size, mtimeMs: 0, isLink: path in world.links, ...real(world.links[path] ?? path) } }
+    }
+    const folder = path.replace(/\/+$/, '')
+    if (Object.keys(world.files).some(key => key.startsWith(`${folder}/`))) {
+      return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false, ...real(folder) } }
+    }
+
+    return { deny: `stat ${path} failed: ENOENT` }
   })
   on('session.cwd', () => ({ value: world.cwd }))
   on('tool.register', (_: unknown, e: any) => {

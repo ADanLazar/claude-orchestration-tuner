@@ -217,3 +217,132 @@ test("status in the panel's command field", async ($, on) => {
   expect(await words(ui)).toMatch(/No plan is tracked\./)
   await ui.unmount()
 })
+
+const OUTSIDE = '/elsewhere/plan.md'
+const refusal = (plan: string): string =>
+  `tune: ${plan} is not a .md file inside this project. To track it, ask the person to type /tune track <path>. Nothing was changed.`
+const track = async ($: any, args: string, origin: Record<string, unknown> = { kind: 'composer' }): Promise<any> =>
+  $.command.run({ command: 'tune', args, origin } as any)
+
+test("the tool refuses a plan outside the session's folder, and does not read it", async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  world.files[OUTSIDE] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+
+  const answer = await tune($, { plan: OUTSIDE })
+  expect(answer).toBe(refusal(OUTSIDE))
+  expect(answer).toContain('/tune track')
+  expect(answer).toContain('Nothing was changed.')
+  expect(answer).not.toContain('\n')
+  expect(await tune($)).toBe('No plan is tracked.')
+  expect(world.reads).not.toContain(OUTSIDE)
+})
+
+test('the refusal is the same whether or not the outside file exists', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  world.files[OUTSIDE] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+
+  const there = await tune($, { plan: OUTSIDE })
+  const missing = await tune($, { plan: '/elsewhere/missing.md' })
+  expect(missing).toBe(there.replace(OUTSIDE, '/elsewhere/missing.md'))
+})
+
+test('a path that climbs out of the folder is outside', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  world.files[OUTSIDE] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+
+  expect(await tune($, { plan: 'docs/../../elsewhere/plan.md' })).toBe(refusal('docs/../../elsewhere/plan.md'))
+  expect(world.reads).not.toContain(OUTSIDE)
+})
+
+test('a link inside the folder that leads outside is refused', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  world.files[OUTSIDE] = PLAN_TEXT
+  world.files['/work/docs/plans/link.md'] = PLAN_TEXT
+  world.links['/work/docs/plans/link.md'] = OUTSIDE
+  fake(on, world)
+  await $.session.start(START)
+
+  expect(await tune($, { plan: 'docs/plans/link.md' })).toBe(refusal('docs/plans/link.md'))
+  expect(await tune($)).toBe('No plan is tracked.')
+  expect(world.reads).not.toContain('/work/docs/plans/link.md')
+})
+
+test('a file that is not .md is refused', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files['/work/notes.txt'] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+
+  expect(await tune($, { plan: 'notes.txt' })).toBe(refusal('notes.txt'))
+  expect(await tune($)).toBe('No plan is tracked.')
+  expect(world.reads).not.toContain('/work/notes.txt')
+})
+
+test('/tune track typed by the person tracks a plan anywhere', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[OUTSIDE] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+
+  const counts = 'Tracking /elsewhere/plan.md: 0 of 3 tasks done, 0 of 9 steps.'
+  expect((await track($, `track ${OUTSIDE}`)).text).toBe(counts)
+  expect(await tune($)).toBe(counts)
+  await $.tool.call({ tool: 'Edit', file_path: OUTSIDE, old_string: '- [ ] Open the file', new_string: '- [x] Open the file' } as any)
+  expect(await tune($)).toContain('1 of 9 steps')
+})
+
+test('/tune track from a plugin does not reach outside', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[OUTSIDE] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+
+  expect((await track($, `track ${OUTSIDE}`, { kind: 'plugin', name: 'other' })).text).toBe(refusal(OUTSIDE))
+  expect(await tune($)).toBe('No plan is tracked.')
+  expect(world.reads).not.toContain(OUTSIDE)
+})
+
+test('/tune track off stops tracking, and /tune track alone answers its usage', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[OUTSIDE] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await track($, `track ${OUTSIDE}`)
+
+  expect((await track($, 'track off')).text).toBe('Nothing is tracked now.')
+  expect(await tune($)).toBe('No plan is tracked.')
+  const usage = String((await track($, 'track')).text)
+  expect(usage).toContain('track <path>')
+  expect(usage).not.toContain('\n')
+})
+
+test("track in the panel's command field", async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[OUTSIDE] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.input({ key: 'command', text: `track ${OUTSIDE}` })
+
+  expect(await words(ui)).toContain('Tracking /elsewhere/plan.md')
+  await ui.unmount()
+})
