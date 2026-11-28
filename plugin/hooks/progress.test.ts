@@ -103,26 +103,79 @@ test('Task N in a ticking persona\'s prompt links it', () => {
   expect(stateOf(again, K2)).toBe('running')
 })
 
-test('an agent that ran, ended and runs again has a running clock', () => {
-  const started = agentStarted(tracked(), executor('a1', 'Do Task 1'), 1000)
-  const ended = agentEnded(started, 'a1', 'completed', 5000)
-  expect(ended.marks[K1]!.stoppedAt).toBe(5000)
+const endedAfterRun = (): Progress => agentEnded(agentStarted(tracked(), executor('a1', 'Do Task 1'), 1000), 'a1', 'completed', 5000)
+
+test('a resumed agent\'s time leaves out the gap', () => {
+  const ended = endedAfterRun()
+  expect(elapsed(ended, K1, 8000)).toBe(4000)
 
   const again = agentStarted(ended, executor('a1', 'Go on'), 9000)
-  expect(again.marks[K1]!.stoppedAt).toBe(null)
-  expect(again.marks[K1]!.startedAt).toBe(1000)
   expect(stateOf(again, K1)).toBe('running')
+  expect(elapsed(again, K1, 9000)).toBe(4000)
+  expect(elapsed(again, K1, 12000)).toBe(7000)
 
-  const edited = observe(ended, tasks('x  ', '    ', '  '), { agent: 'a1', task: 0 }, 9000)
-  expect(edited.marks[K1]!.stoppedAt).toBe(null)
-  expect(edited.marks[K1]!.startedAt).toBe(1000)
+  const over = agentEnded(again, 'a1', 'completed', 13000)
+  expect(elapsed(over, K1, 20000)).toBe(8000)
+})
+
+test('the same when a tick resumes it', () => {
+  const edited = observe(endedAfterRun(), tasks('x  ', '    ', '  '), { agent: 'a1', task: 0, tick: true }, 9000)
   expect(stateOf(edited, K1)).toBe('running')
+  expect(elapsed(edited, K1, 12000)).toBe(7000)
   expect(edited.marks[K1]!.ticks).toEqual([{ at: 9000, kind: 'agent' }])
+})
+
+test('a resumed agent\'s estimate uses this run\'s pace', () => {
+  let state = agentStarted(from('     '), executor('a1', 'Do Task 1'), 0)
+  state = tick(state, 'a1', 10000, 'x    ')
+  state = tick(state, 'a1', 20000, 'xx   ')
+  state = agentEnded(state, 'a1', 'completed', 20000)
+  state = agentStarted(state, executor('a1', 'Go on'), 100000)
+  state = tick(state, 'a1', 104000, 'xxx  ')
+  expect(left(state, K1, 104000)).toEqual({ kind: 'about', ms: 8000 })
+})
+
+test('a correction after the agent moved on adds no time', () => {
+  let state = agentStarted(tracked(), executor('A', 'Do Task 1'), 0)
+  state = observe(state, tasks('x  ', '    ', '  '), { agent: 'A', task: 0, tick: true }, 30000)
+  state = observe(state, tasks('xx ', '    ', '  '), { agent: 'A', task: 0, tick: true }, 60000)
+  state = observe(state, tasks('xx ', 'x   ', '  '), { agent: 'A', task: 1, tick: true }, 100000)
+  state = observe(state, tasks('xxx', 'x   ', '  '), { agent: null, task: 0, tick: true }, 3600000)
+
+  expect(stateOf(state, K1)).toBe('done')
+  expect(state.marks[K1]!.ticks[state.marks[K1]!.ticks.length - 1]!.kind).toBe('fix')
+  expect(elapsed(state, K1, 3600000)).toBe(60000)
+})
+
+test('an edit that ticks nothing links nothing', () => {
+  const started = agentStarted(tracked(), executor('a1', 'Do Task 2'), 1000)
+  const state = observe(started, started.tasks, { agent: 'a1', task: 2, tick: false }, 2000)
+
+  expect(state.marks[K2]!.agent).toBe('a1')
+  expect(stateOf(state, K2)).toBe('running')
+  expect(stateOf(state, K3)).toBe('waiting')
+})
+
+test('a tick seen first by a timed read still links the agent', () => {
+  let state = agentStarted(tracked(), executor('a1', 'Do Task 1'), 1000)
+  state = observe(state, tasks('   ', 'x   ', '  '), null, 2000)
+  state = observe(state, state.tasks, { agent: 'a1', task: 1, tick: true }, 2100)
+
+  expect(state.marks[K2]!.agent).toBe('a1')
+  expect(state.marks[K1]!.agent).toBe(null)
+})
+
+test('another agent\'s tick moves the count and starts no clock', () => {
+  const state = observe(tracked(), tasks('x  ', '    ', '  '), { agent: 'x9', task: 0, tick: true }, 2000)
+
+  expect(stateOf(state, K1)).toBe('waiting')
+  expect(state.tasks[0]!.steps.filter(Boolean).length).toBe(1)
+  expect(elapsed(state, K1, 3000)).toBe(null)
 })
 
 test('a tick by an agent links it to that task, and that wins', () => {
   let state = agentStarted(tracked(), executor('a1', 'Do Task 1'), 1000)
-  state = observe(state, tasks('   ', 'x   ', '  '), { agent: 'a1', task: 1 }, 2000)
+  state = observe(state, tasks('   ', 'x   ', '  '), { agent: 'a1', task: 1, tick: true }, 2000)
 
   expect(state.marks[K2]!.agent).toBe('a1')
   expect(state.marks[K2]!.ticks).toEqual([{ at: 2000, kind: 'agent' }])
@@ -139,7 +192,7 @@ test('how the agent ended decides the state', () => {
   expect(stateOf(agentEnded(started, 'a1', 'stopped', 2000), K2)).toBe('stopped')
   expect(agentEnded(started, 'a1', 'completed', 2000).marks[K2]!.stoppedAt).toBe(2000)
 
-  const ticked = observe(started, tasks('   ', 'xxxx', '  '), { agent: 'a1', task: 1 }, 1500)
+  const ticked = observe(started, tasks('   ', 'xxxx', '  '), { agent: 'a1', task: 1, tick: true }, 1500)
   for (const how of ['completed', 'failed', 'stopped'] as const) {
     expect(stateOf(agentEnded(ticked, 'a1', how, 2000), K2)).toBe('done')
   }
@@ -147,11 +200,11 @@ test('how the agent ended decides the state', () => {
 
 test('to check clears when every box is ticked or another agent is linked', () => {
   let state = agentStarted(tracked(), executor('a1', 'Do Task 2'), 1000)
-  state = observe(state, tasks('   ', 'xx  ', '  '), { agent: 'a1', task: 1 }, 1500)
+  state = observe(state, tasks('   ', 'xx  ', '  '), { agent: 'a1', task: 1, tick: true }, 1500)
   state = agentEnded(state, 'a1', 'completed', 2000)
   expect(stateOf(state, K2)).toBe('to check')
 
-  const fixed = observe(state, tasks('   ', 'xxxx', '  '), { agent: null, task: 1 }, 3000)
+  const fixed = observe(state, tasks('   ', 'xxxx', '  '), { agent: null, task: 1, tick: true }, 3000)
   expect(stateOf(fixed, K2)).toBe('done')
   expect(fixed.marks[K2]!.ticks.map(tick => tick.kind)).toEqual(['agent', 'agent', 'fix', 'fix'])
 
@@ -161,11 +214,11 @@ test('to check clears when every box is ticked or another agent is linked', () =
 })
 
 test('a task the main conversation works itself', () => {
-  let state = observe(tracked(), tasks('x  ', '    ', '  '), { agent: null, task: 0 }, 5000)
+  let state = observe(tracked(), tasks('x  ', '    ', '  '), { agent: null, task: 0, tick: true }, 5000)
   expect(stateOf(state, K1)).toBe('running')
   expect(state.marks[K1]).toEqual({ agent: null, startedAt: 5000, stoppedAt: 5000, ticks: [{ at: 5000, kind: 'main' }] })
 
-  state = observe(state, tasks('xx ', '    ', '  '), { agent: null, task: 0 }, 65000)
+  state = observe(state, tasks('xx ', '    ', '  '), { agent: null, task: 0, tick: true }, 65000)
   expect(state.marks[K1]!.startedAt).toBe(5000)
   expect(state.marks[K1]!.stoppedAt).toBe(65000)
   expect(state.marks[K1]!.ticks.length).toBe(2)
@@ -183,7 +236,7 @@ test('a tick nobody\'s edit explains', () => {
 test('two agents tick between two reads', () => {
   let state = agentStarted(tracked(), executor('A', 'Do Task 1'), 1000)
   state = agentStarted(state, executor('B', 'Do Task 2'), 1000)
-  state = observe(state, tasks('x  ', 'x   ', '  '), { agent: 'A', task: 0 }, 2000)
+  state = observe(state, tasks('x  ', 'x   ', '  '), { agent: 'A', task: 0, tick: true }, 2000)
 
   expect(state.marks[K1]!.agent).toBe('A')
   expect(state.marks[K1]!.ticks).toEqual([{ at: 2000, kind: 'agent' }])
@@ -194,7 +247,7 @@ test('two agents tick between two reads', () => {
 test('the plan changes while it is tracked', () => {
   let state = agentStarted(tracked(), executor('A', 'Do Task 1'), 1000)
   state = agentStarted(state, executor('B', 'Do Task 2'), 1100)
-  state = observe(state, tasks('x  ', '    ', '  '), { agent: 'A', task: 0 }, 2000)
+  state = observe(state, tasks('x  ', '    ', '  '), { agent: 'A', task: 0, tick: true }, 2000)
   const before = state.marks[K1]!.ticks.length
 
   const changed = readPlan(
@@ -267,12 +320,12 @@ test('who tracked the plan is kept', () => {
 test('a task may be named like a built-in', () => {
   const plan = (one: string, two: string): Task[] =>
     readPlan(['## constructor', ...boxes(one), '', '## __proto__', ...boxes(two)].join('\n'), 'odd.md')
-  const quiet = track(NOTHING, 'docs/plans/odd.md', 'odd.md', plan('  ', '  '))
+  const quiet = track(NOTHING, 'docs/plans/odd.md', 'odd.md', plan('   ', '  '))
   expect(quiet.tasks.map(task => task.key)).toEqual(['constructor', '__proto__'])
 
   let state = agentStarted(quiet, executor('a1', 'Go'), 1000)
-  state = observe(state, plan('x ', '  '), { agent: 'a1', task: 0 }, 2000)
-  state = observe(state, plan('x ', 'x '), { agent: null, task: 1 }, 3000)
+  state = observe(state, plan('x  ', '  '), { agent: 'a1', task: 0, tick: true }, 2000)
+  state = observe(state, plan('x  ', 'x '), { agent: null, task: 1, tick: true }, 3000)
 
   expect(stateOf(state, 'constructor')).toBe('running')
   expect(stateOf(state, '__proto__')).toBe('running')
@@ -280,14 +333,17 @@ test('a task may be named like a built-in', () => {
   expect(state.marks['constructor']!.agent).toBe('a1')
   expect(state.marks['constructor']!.ticks).toEqual([{ at: 2000, kind: 'agent' }])
   expect(state.marks['__proto__']!.ticks).toEqual([{ at: 3000, kind: 'main' }])
-  const kinds = ['none', 'unknown', 'over', 'about']
   for (const key of ['constructor', '__proto__']) {
-    for (const each of [state, quiet]) {
-      const taken = elapsed(each, key, 4000)
-      expect(taken === null || typeof taken === 'number').toBe(true)
-      expect(kinds).toContain(left(each, key, 4000).kind)
-    }
+    expect(elapsed(quiet, key, 4000)).toBe(null)
+    expect(left(quiet, key, 4000)).toEqual({ kind: 'none' })
   }
+
+  state = observe(state, plan('xx ', 'x '), { agent: 'a1', task: 0, tick: true }, 6000)
+  expect(elapsed(state, 'constructor', 6000)).toBe(4000)
+  expect(left(state, 'constructor', 6000)).toEqual({ kind: 'about', ms: 4000 })
+  state = observe(state, plan('xxx', 'x '), { agent: 'a1', task: 0, tick: true }, 6000)
+  expect(stateOf(state, 'constructor')).toBe('done')
+  expect(elapsed(state, 'constructor', 6000)).toBe(4000)
 
   expect(() => {
     expect(stateOf(quiet, 'constructor')).toBe('waiting')
@@ -311,7 +367,7 @@ const plan = (...each: string[]): Task[] =>
   readPlan(each.map((marks, index) => [`### Task ${index + 1}: ${TITLES[index]}`, ...boxes(marks)].join('\n')).join('\n\n'), 'export.md')
 const from = (...each: string[]): Progress => track(NOTHING, PATH, 'export.md', plan(...each))
 const tick = (state: Progress, agent: string | null, at: number, ...each: string[]): Progress =>
-  observe(state, plan(...each), { agent, task: 0 }, at)
+  observe(state, plan(...each), { agent, task: 0, tick: true }, at)
 
 test('time taken runs while the agent runs and stops when it ends', () => {
   const started = agentStarted(from('    '), executor('a1', 'Do Task 1'), 1000)
@@ -408,14 +464,14 @@ const SCENE = ((): Progress => {
   let state = track(NOTHING, PATH, PATH, tasks('   ', '    ', '  '))
   state = setTracker(state, { id: 'PROJ-12', title: 'Export to CSV', state: 'In Progress' }, NOW - 12 * 60000)
   state = agentStarted(state, executor('a1', 'Do Task 1 of the plan'), 0)
-  state = observe(state, tasks('x  ', '    ', '  '), { agent: 'a1', task: 0 }, 40000)
-  state = observe(state, tasks('xx ', '    ', '  '), { agent: 'a1', task: 0 }, 80000)
-  state = observe(state, tasks('xxx', '    ', '  '), { agent: 'a1', task: 0 }, 130000)
+  state = observe(state, tasks('x  ', '    ', '  '), { agent: 'a1', task: 0, tick: true }, 40000)
+  state = observe(state, tasks('xx ', '    ', '  '), { agent: 'a1', task: 0, tick: true }, 80000)
+  state = observe(state, tasks('xxx', '    ', '  '), { agent: 'a1', task: 0, tick: true }, 130000)
   state = agentEnded(state, 'a1', 'completed', 130000)
   state = agentStarted(state, executor('a2', 'Do Task 2 of the plan'), 130000)
   state = agentStarted(state, reviewer('a3'), 131000)
-  state = observe(state, tasks('xxx', 'x   ', '  '), { agent: 'a2', task: 1 }, 148000)
-  return observe(state, tasks('xxx', 'xx  ', '  '), { agent: 'a2', task: 1 }, 166000)
+  state = observe(state, tasks('xxx', 'x   ', '  '), { agent: 'a2', task: 1, tick: true }, 148000)
+  return observe(state, tasks('xxx', 'xx  ', '  '), { agent: 'a2', task: 1, tick: true }, 166000)
 })()
 const isTaskLine = (line: string): boolean => /^[·▶✓!✗] /.test(line)
 
@@ -447,9 +503,9 @@ test('shown counts tasks and steps and marks each task', () => {
 test('the estimate and the tracker\'s age in words', () => {
   const leftAt = (state: Progress, now: number): string => shown(state, now).rows[1]!.left
   const linked = agentStarted(tracked(), executor('a2', 'Do Task 2'), 0)
-  const shortOne = observe(linked, tasks('   ', 'x   ', '  '), { agent: 'a2', task: 1 }, 20000)
+  const shortOne = observe(linked, tasks('   ', 'x   ', '  '), { agent: 'a2', task: 1, tick: true }, 20000)
   expect(leftAt(shortOne, 28000)).toBe('~55s left')
-  const longOne = observe(linked, tasks('   ', 'x   ', '  '), { agent: 'a2', task: 1 }, 80000)
+  const longOne = observe(linked, tasks('   ', 'x   ', '  '), { agent: 'a2', task: 1, tick: true }, 80000)
   expect(leftAt(longOne, 80000)).toBe('~4m left')
   expect(leftAt(linked, 1000)).toBe('no estimate yet')
   expect(leftAt(shortOne, 90000)).toBe('longer than estimated')

@@ -214,7 +214,7 @@ const INLINE_ROWS = 37
  * Reads the tracked plan again and records what changed; `by` names whose edit it was.
  * Nothing is read, and the clock is not asked, when no plan is tracked. Never throws.
  */
-async function reread($: any, by: { agent: string | null; fragment: string } | null): Promise<void> {
+async function reread($: any, by: { agent: string | null; fragment: string; tick: boolean } | null): Promise<void> {
   try {
     const { plan, anywhere } = await read($, progress)
     if (plan === null) {
@@ -234,7 +234,7 @@ async function reread($: any, by: { agent: string | null; fragment: string } | n
       return
     }
     const tasks = readPlan(text, baseName(plan))
-    const who = by && { agent: by.agent, task: touched(tasks, text, by.fragment) }
+    const who = by && { agent: by.agent, task: touched(tasks, text, by.fragment), tick: by.tick }
     const at = await $.clock.now()
     await update($, progress, now => (now.plan === plan ? observe(now, tasks, who, at) : now))
   } catch {
@@ -600,7 +600,10 @@ export const register: Register = on => {
         resolvePath(String(await $.session.cwd()), String(input.file_path ?? '')) === plan
       ) {
         const agent = typeof input.agentId === 'string' ? input.agentId : null
-        await reread($, { agent, fragment: input.tool === 'Edit' ? String(input.new_string ?? '') : '' })
+        const edit = input.tool === 'Edit'
+        const boxes = (text: unknown): number => (String(text ?? '').match(/\[[xX]\]/g) ?? []).length
+        const tick = edit && boxes(input.new_string) > boxes(input.old_string)
+        await reread($, { agent, fragment: edit ? String(input.new_string ?? '') : '', tick })
       }
     } catch {
       // Never stand between a tool and its answer.

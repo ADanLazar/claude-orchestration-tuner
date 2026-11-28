@@ -7,7 +7,15 @@ import type { Task } from './plan'
 export { TICKERS } from './plan'
 
 export type Tick = { at: number; kind: 'agent' | 'main' | 'fix' }
-export type Mark = { agent: string | null; startedAt: number | null; stoppedAt: number | null; ticks: Tick[] }
+/** `spent`: the time of this agent's earlier runs on the task; `had`: an agent has been on it this session. */
+export type Mark = {
+  agent: string | null
+  startedAt: number | null
+  stoppedAt: number | null
+  ticks: Tick[]
+  spent?: number
+  had?: boolean
+}
 export type AgentRun = {
   id: string
   type: string
@@ -56,7 +64,8 @@ function link(marks: Record<string, Mark>, id: string, key: string, now: number)
   const out = Object.fromEntries(
     Object.entries(marks).map(([other, mark]): [string, Mark] => {
       const last = mark.ticks[mark.ticks.length - 1]
-      return [other, other !== key && mark.agent === id ? { ...mark, agent: null, stoppedAt: last ? last.at : mark.startedAt } : mark]
+      const off = { ...mark, agent: null, had: true, stoppedAt: last ? last.at : mark.startedAt }
+      return [other, other !== key && mark.agent === id ? off : mark]
     }),
   )
   return markOf(out, key)?.agent === id ? out : { ...out, [key]: { agent: id, startedAt: now, stoppedAt: null, ticks: [] } }
@@ -65,9 +74,15 @@ function link(marks: Record<string, Mark>, id: string, key: string, now: number)
 const running = (agents: AgentRun[], id: string): AgentRun[] =>
   agents.map(agent => (agent.id === id ? { ...agent, endedAt: null, ended: null } : agent))
 
-/** An ended agent that runs again: the clock of the task it is on runs again too. */
-const resumed = (marks: Record<string, Mark>, id: string): Record<string, Mark> =>
-  Object.fromEntries(Object.entries(marks).map(([key, mark]) => [key, mark.agent === id ? { ...mark, stoppedAt: null } : mark]))
+/** An ended agent that runs again: the clock of its task runs again from `now`, keeping the time already spent. */
+const resumed = (marks: Record<string, Mark>, id: string, now: number): Record<string, Mark> =>
+  Object.fromEntries(
+    Object.entries(marks).map(([key, mark]): [string, Mark] => {
+      if (mark.agent !== id || mark.startedAt === null || mark.stoppedAt === null) return [key, mark]
+      const spent = (mark.spent ?? 0) + mark.stoppedAt - mark.startedAt
+      return [key, { ...mark, spent, startedAt: now, stoppedAt: null }]
+    }),
+  )
 
 export function track(state: Progress, plan: string, label: string, tasks: Task[], anywhere = false): Progress {
   const marks = plan === state.plan ? kept(state.marks, tasks) : {}
@@ -110,7 +125,7 @@ export function agentStarted(
   const agents = known
     ? running(state.agents, agent.id)
     : [...state.agents, { id: agent.id, type: agent.type, apart: agent.apart, startedAt: now, endedAt: null, ended: null }]
-  const before = known && known.endedAt !== null ? resumed(state.marks, agent.id) : state.marks
+  const before = known && known.endedAt !== null ? resumed(state.marks, agent.id, now) : state.marks
   const index = isTicker(agent.type) ? linkByPrompt(state.tasks, agent.prompt) : null
   const task = index === null ? undefined : state.tasks[index]
   const marks = task ? link(before, agent.id, task.key, now) : before
@@ -129,7 +144,7 @@ export function agentEnded(state: Progress, id: string, how: 'completed' | 'fail
 export function observe(
   state: Progress,
   tasks: Task[],
-  by: { agent: string | null; task: number | null } | null,
+  by: { agent: string | null; task: number | null; tick: boolean } | null,
   now: number,
 ): Progress {
   const before: Record<string, number> = Object.fromEntries(state.tasks.map(task => [task.key, ticked(task)]))
@@ -150,10 +165,11 @@ export function observe(
   const run = by && by.agent !== null ? runOf(state, by.agent) : undefined
   if (by && run && isTicker(run.type)) {
     agents = running(agents, run.id)
-    if (run.endedAt !== null) marks = resumed(marks, run.id)
+    if (run.endedAt !== null) marks = resumed(marks, run.id, now)
     const index = by.task ?? rise.findIndex(count => count > 0)
     const task = tasks[index]
-    if (index >= 0 && task) {
+    // An edit that ticked nothing links nothing; a tick a timed read saw first still links.
+    if (index >= 0 && task && ((rise[index] ?? 0) > 0 || by.tick)) {
       own = index
       marks = link(marks, run.id, task.key, now)
       const count = rise[index] ?? 0
@@ -161,13 +177,16 @@ export function observe(
     }
   }
   const main = by !== null && by.agent === null
+  // An agent that is not a ticking persona corrects: its ticks start no clock.
+  const other = by !== null && by.agent !== null && !(run && isTicker(run.type))
   tasks.forEach((task, index) => {
     const count = rise[index] ?? 0
     if (index === own || count === 0) return
-    const agent = markOf(marks, task.key)?.agent ?? null
+    const mark = markOf(marks, task.key)
+    const agent = mark?.agent ?? null
     const onIt = agent === null ? undefined : agents.find(each => each.id === agent)
     if (!main && onIt && onIt.endedAt === null) add(task.key, 'agent', count)
-    else add(task.key, agent === null ? 'main' : 'fix', count)
+    else add(task.key, agent === null && !mark?.had && !other ? 'main' : 'fix', count)
   })
   return { ...state, unread: false, tasks, marks, agents }
 }
@@ -186,7 +205,7 @@ export function stateOf(state: Progress, key: string): TaskState {
 
 export function elapsed(state: Progress, key: string, now: number): number | null {
   const mark = markOf(state.marks, key)
-  return !mark || mark.startedAt === null ? null : (mark.stoppedAt ?? now) - mark.startedAt
+  return !mark || mark.startedAt === null ? null : (mark.spent ?? 0) + (mark.stoppedAt ?? now) - mark.startedAt
 }
 
 export type Left = { kind: 'none' } | { kind: 'unknown' } | { kind: 'over' } | { kind: 'about'; ms: number }

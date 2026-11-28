@@ -52,7 +52,14 @@ export type Task = {
   steps: boolean[]
 }
 export type Tick = { at: number; kind: 'agent' | 'main' | 'fix' }
-export type Mark = { agent: string | null; startedAt: number | null; stoppedAt: number | null; ticks: Tick[] }
+export type Mark = {
+  agent: string | null
+  startedAt: number | null
+  stoppedAt: number | null
+  ticks: Tick[]
+  spent?: number
+  had?: boolean
+}
 export type AgentRun = {
   id: string
   type: string
