@@ -22,7 +22,7 @@ const MAY_NAME_OWNER = new Set(
 const FORBIDDEN = /\bDan\b|\bomc\b|oh-my-?claude/i
 const HEADER_KEYS = new Set(['name', 'description', 'model', 'effort', 'disallowedTools'])
 // Personas that report and must never edit.
-const READ_ONLY = new Set(['code-reviewer', 'security-reviewer'])
+const READ_ONLY = new Set(['code-reviewer', 'security-reviewer', 'investigator'])
 
 function readJson(file) {
   try {
@@ -115,7 +115,7 @@ for (const name of files) {
     }
   }
   if (READ_ONLY.has(role) && agent.keys.disallowedTools !== 'Write, Edit') {
-    fault(file, 'a reviewer must carry "disallowedTools: Write, Edit"')
+    fault(file, 'a persona that only reads must carry "disallowedTools: Write, Edit"')
   }
   if (agent.body.length === 0) {
     fault(file, 'no prompt')

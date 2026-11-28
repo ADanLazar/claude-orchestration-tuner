@@ -11,7 +11,7 @@ const SHIPPED = [
   '',
   'When you use a team:',
   '- You make the decisions: architecture, acceptance criteria, order of work. The planner turns them into a plan file, and implementers work from that file.',
-  '- Use the role agents: tune:planner, tune:executor, tune:code-reviewer, tune:test-engineer, tune:writer. Use tune:debugger for a failure whose cause is not known, tune:security-reviewer for a change that touches sign-in, permissions, payments or personal data, and tune:designer for user interface work. Each carries its own model and effort. Do not pass a model or an effort when you launch one, except to escalate.',
+  '- Use the role agents: tune:planner, tune:executor, tune:code-reviewer, tune:test-engineer, tune:writer, tune:investigator. Use tune:debugger for a failure whose cause is not known, tune:security-reviewer for a change that touches sign-in, permissions, payments or personal data, and tune:designer for user interface work. Each carries its own model and effort. Do not pass a model or an effort when you launch one, except to escalate.',
   '- Escalate on failure: if a piece fails its tests or its review, redo it one effort level up, then one model up. Start one level up where a mistake is expensive: sign-in, permissions, payments, data migrations.',
   '- Give each task in the plan to a fresh agent, and keep tasks small enough to finish in one run. Do not hand new work to an agent that has already finished a task.',
   "- Review at each milestone, and after each task in the areas named above. Reviewers check the diff against the plan, not the implementer's summary.",
@@ -40,6 +40,7 @@ test('a profile without specialists names none; with one, names that one', () =>
   delete five.roles.debugger
   delete five.roles['security-reviewer']
   delete five.roles.designer
+  delete five.roles.investigator
   expect(render(five)).not.toContain('tune:debugger')
   expect(render(five)).toContain('tune:writer. Each carries its own model and effort.')
 

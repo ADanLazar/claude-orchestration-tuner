@@ -148,6 +148,19 @@ test('a full model id is shown as its own option', async ($, on) => {
   await ui.unmount()
 })
 
+test('the investigator\'s row is marked new on a profile saved by 0.1.0', async ($, on) => {
+  const older: any = copy(FAST)
+  delete older.roles.investigator
+  delete older.questions
+  delete older.reports
+  fake(on, makeIo({ profiles: { fast: older }, inForce: 'fast' }))
+  await $.session.start(START)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect(await words(ui)).toMatch(/investigator\s+new/)
+  await ui.unmount()
+})
+
 test('a filled profile shows new on the filled row and keep saves it', async ($, on) => {
   const older: any = copy(FAST)
   delete older.roles.designer

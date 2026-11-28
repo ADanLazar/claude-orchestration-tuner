@@ -11,7 +11,7 @@ test('a session starts with the personas registered and no toast', async ($, on)
   fake(on, world)
   await $.session.start(START)
 
-  expect(world.registered.length).toBe(8)
+  expect(world.registered.length).toBe(9)
   expect(latest(world, 'writer')!.model).toBe('haiku')
   expect(latest(world, 'writer')!.effort).toBe('high')
   expect(world.toasts).toEqual([])
@@ -80,7 +80,7 @@ test('a prompt with nothing changed re-registers nothing and carries nothing', a
   await $.session.start(START)
   const sent = await $.prompt.submit({ text: 'hello' } as any)
 
-  expect(world.registered.length).toBe(8)
+  expect(world.registered.length).toBe(9)
   expect(sent.context ?? []).toEqual([])
 })
 
@@ -121,7 +121,7 @@ test('a slash command is passed on untouched', async ($, on) => {
   const sent = await $.prompt.submit({ text: '/help', command: { name: 'help' } } as any)
 
   expect(sent.context ?? []).toEqual([])
-  expect(world.registered.length).toBe(8)
+  expect(world.registered.length).toBe(9)
 })
 
 test('/tune with words answers, applies the change and hands over changed rules', async ($, on) => {
@@ -148,7 +148,7 @@ test('/tune with a refused command changes nothing', async ($, on) => {
   const answer = await $.command.run({ command: 'tune', args: 'use nothing' } as any)
 
   expect(answer.text).toBe("tune: no profile named 'nothing'")
-  expect(world.registered.length).toBe(8)
+  expect(world.registered.length).toBe(9)
 })
 
 test('rules changed and changed back are handed over each time', async ($, on) => {
@@ -170,7 +170,7 @@ test('a session whose store fails from the start still has the shipped rules and
   const { sections } = await $.prompt.compose(COMPOSE as any)
   const sent = await $.prompt.submit({ text: 'go' } as any)
 
-  expect(world.registered.length).toBe(8)
+  expect(world.registered.length).toBe(9)
   expect(sections[sections.length - 1]!.text).toContain('Tune profile: build.')
   expect(sent.text).toBe('go')
 })

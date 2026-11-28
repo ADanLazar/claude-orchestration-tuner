@@ -11,7 +11,8 @@
     "writer": {"model": "haiku", "effort": "high"},
     "debugger": {"model": "sonnet", "effort": "high"},
     "security-reviewer": {"model": "opus", "effort": "medium"},
-    "designer": {"model": "sonnet", "effort": "medium"}
+    "designer": {"model": "sonnet", "effort": "medium"},
+    "investigator": {"model": "sonnet", "effort": "high"}
   },
   "escalation": true,
   "start_higher": ["sign-in", "permissions", "payments", "data migrations"],

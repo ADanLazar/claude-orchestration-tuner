@@ -171,6 +171,17 @@ test('an older own profile is filled, and keep saves it whole', async () => {
   expect(ownIn(fake).fast.roles.designer).toEqual({ model: 'sonnet', effort: 'medium' })
 })
 
+test('a profile saved by 0.1.0 gains the investigator and the two dials', async () => {
+  const older: any = copy(FAST)
+  delete older.roles.investigator
+  delete older.questions
+  delete older.reports
+  const world = await load(makeIo({ profiles: { fast: older } }).io)
+
+  expect(get(world, 'fast').roles.investigator).toEqual({ model: 'sonnet', effort: 'high' })
+  expect(world.filled.fast).toEqual(['questions', 'reports', 'roles.investigator'])
+})
+
 test('the profile in force is gone', async () => {
   const world = await load(makeIo({ inForce: 'fast' }).io)
 

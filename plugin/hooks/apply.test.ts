@@ -21,6 +21,13 @@ test('each persona is registered at the profile\'s level', async () => {
   expect(latest(fake, 'code-reviewer')!.model).toBe('opus')
 })
 
+test('the investigator is registered read-only at its level', async () => {
+  const fake = makeIo()
+
+  expect(await apply(fake.io, BUILD)).toEqual([])
+  expect(latest(fake, 'investigator')).toMatchObject({ model: 'sonnet', effort: 'high', disallowedTools: ['Write', 'Edit'] })
+})
+
 test('a persona whose file cannot be read is reported and the rest register', async () => {
   const fake = makeIo()
   fake.failRead.add(`${ROOT}/agents/writer.md`)
@@ -28,7 +35,7 @@ test('a persona whose file cannot be read is reported and the rest register', as
 
   expect(problems.length).toBe(1)
   expect(problems[0]).toMatch(/^writer: /)
-  expect(fake.registered.length).toBe(7)
+  expect(fake.registered.length).toBe(8)
 })
 
 test('a refused registration is reported', async () => {
@@ -37,5 +44,5 @@ test('a refused registration is reported', async () => {
   const problems = await apply(fake.io, BUILD)
 
   expect(problems).toEqual(['designer: could not be registered (the schema refuses it)'])
-  expect(fake.registered.length).toBe(7)
+  expect(fake.registered.length).toBe(8)
 })

@@ -164,7 +164,7 @@ async function handOver($: any, now: View): Promise<string | null> {
 }
 
 // Enough rows for the whole panel where the terminal shows it above the prompt and not at the side.
-const INLINE_ROWS = 36
+const INLINE_ROWS = 37
 
 /** Opens the panel as a person first sees it: nothing is waiting to be confirmed. */
 async function openPane($: any): Promise<void> {
