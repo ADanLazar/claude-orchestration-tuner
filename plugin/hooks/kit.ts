@@ -94,6 +94,14 @@ export type FakeIo = {
   closed: string[]
   /** How many model requests reached the stand-in model. */
   requests: number
+  /** What `$.session.cwd()` answers. */
+  cwd: string
+  /** Each spec given to `$.tool.register`, in order. */
+  tools: Record<string, any>[]
+  /** Every path the mod read, in order. */
+  reads: string[]
+  /** How many agents the stand-in `agent.spawn` started. */
+  spawned: number
 }
 
 /**
@@ -128,6 +136,10 @@ export function makeIo(seed: Record<string, unknown> = {}): FakeIo {
     openArgs: [],
     closed: [],
     requests: 0,
+    cwd: '/work',
+    tools: [],
+    reads: [],
+    spawned: 0,
     io: {
       root: ROOT,
       get: async key => {
@@ -213,8 +225,12 @@ export function fake(on: any, world: FakeIo): void {
     }
   }
   // The mod reads under its real folder; the stand-in serves the same relative path.
+  // A path that is a key is served as it is, and only keys under ROOT stand for the plugin's folder.
   const local = (path: string): string => {
-    const hit = Object.keys(world.files).find(key => path.endsWith(key.slice(ROOT.length)))
+    if (path in world.files) {
+      return path
+    }
+    const hit = Object.keys(world.files).find(key => key.startsWith(`${ROOT}/`) && path.endsWith(key.slice(ROOT.length)))
 
     return hit ?? path
   }
@@ -251,7 +267,56 @@ export function fake(on: any, world: FakeIo): void {
   on('store.set', (_: unknown, e: any) => answer(world.io.set(e.key, e.value)))
   on('store.keys', () => answer(world.io.keys()))
   on('store.delete', (_: unknown, e: any) => answer(world.io.drop(e.key)))
-  on('fs.read', (_: unknown, e: any) => answer(world.io.read(local(String(e.path)))))
+  on('fs.read', (_: unknown, e: any) => {
+    // Recorded as served: a read of the plugin's real folder is recorded under ROOT.
+    const path = local(String(e.path))
+    world.reads.push(path)
+
+    return answer(world.io.read(path))
+  })
+  on('session.cwd', () => ({ value: world.cwd }))
+  on('tool.register', (_: unknown, e: any) => {
+    world.tools.push(e)
+
+    return { value: { tool: `mcp__tune__${String(e.name)}` } }
+  })
+  // The tools themselves, at the bottom of the chain: Edit and Write change world.files.
+  on('tool.call', (_: unknown, e: any) => {
+    if (e.tool === 'Edit') {
+      const text = world.files[e.file_path]
+      const old = String(e.old_string)
+      if (text === undefined || text.split(old).length !== 2) {
+        return { result: 'no match', text: 'no match', isError: true }
+      }
+      world.files[e.file_path] = text.replace(old, () => String(e.new_string))
+
+      return { result: 'edited', text: 'edited' }
+    }
+    if (e.tool === 'Write') {
+      world.files[e.file_path] = String(e.content)
+
+      return { result: 'edited', text: 'edited' }
+    }
+
+    return { result: 'ok', text: 'ok' }
+  })
+  // A started agent is listed as the engine lists it; its report leaves the list alone.
+  on('agent.spawn', (_: unknown, e: any) => {
+    world.spawned += 1
+    const id = `a${world.spawned}`
+    world.agents.push({
+      id,
+      type: e.subagentType,
+      taskStatus: 'running',
+      model: 'claude-sonnet-5-5',
+      effort: 'medium',
+      cwd: world.cwd,
+      startTime: 0,
+    })
+
+    return { model: 'claude-sonnet-5-5', agentId: id }
+  })
+  on('agent.report', (_: unknown, e: any) => ({ text: e.text }))
   on('agent.register', (_: unknown, e: any) => answer(world.io.register(e)))
   // The model: answers every request with the effort it was asked at.
   on('turn.step', async function* (_: unknown, e: any) {
@@ -263,6 +328,31 @@ export function fake(on: any, world: FakeIo): void {
 }
 
 export const START = { cwd: '/', surface: 'terminal', isInteractive: true } as const
+
+/** The plan the tracking tests follow, and where it lies under `cwd`. */
+export const PLAN_PATH = '/work/docs/plans/export.md'
+export const PLAN_TEXT = [
+  '# Export to CSV',
+  '',
+  '### Task 1: Read the file',
+  '',
+  '- [ ] Open the file',
+  '- [ ] Parse the rows',
+  '- [ ] Report bad rows',
+  '',
+  '### Task 2: Write the rows',
+  '',
+  '- [ ] Format one row',
+  '- [ ] Write the header',
+  '- [ ] Write every row',
+  '- [ ] Close the file',
+  '',
+  '### Task 3: Tests',
+  '',
+  '- [ ] Test an empty file',
+  '- [ ] Test a large file',
+  '',
+].join('\n')
 
 /** The newest spec registered for one persona. */
 export const latest = (world: FakeIo, name: string): Record<string, any> | undefined =>

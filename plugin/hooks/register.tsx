@@ -8,7 +8,9 @@ import type { Level, Profile, View } from '../types'
 import { apply } from './apply'
 import { GUARD, render } from './brief'
 import { explain, run } from './commands'
+import { baseName, readPlan, relativeTo, resolvePath, touched } from './plan'
 import { EFFORTS, MODELS } from './profile'
+import { clear, NOTHING, observe, setTracker, shown, summary, track, unreadable } from './progress'
 import { change, create, get, has, keep, kind, load, names, remove, reset, use } from './store'
 import type { Io } from './store'
 
@@ -31,6 +33,33 @@ const tick = atom({ plugin: 'tune', key: 'tick' } as const, 0)
 const why = atom({ plugin: 'tune', key: 'why' } as const, false)
 // The profile a delete is waiting to have confirmed by a second press.
 const confirm = atom({ plugin: 'tune', key: 'confirm' } as const, null as string | null)
+const progress = atom({ plugin: 'tune', key: 'progress' } as const, NOTHING, { shape: 'progress-1' })
+
+const TOOL = 'mcp__tune__progress'
+const TOOL_TEXT =
+  'Tells Tune which plan file to show progress for. Call it once when work on a plan starts, with the plan\'s path. Pass tracker when the project has a tracker item for the work. Answers with the current counts.'
+const TOOL_SCHEMA = {
+  type: 'object',
+  properties: {
+    plan: {
+      type: 'string',
+      description: 'Path of the plan file: a Markdown file whose tasks are headings and whose steps are checkboxes.',
+    },
+    tracker: {
+      type: 'object',
+      description: "The tracker item this work belongs to, in the tracker's own words.",
+      properties: {
+        id: { type: 'string' },
+        title: { type: 'string' },
+        state: { type: 'string' },
+        done: { type: 'number' },
+        total: { type: 'number' },
+      },
+      required: ['id'],
+    },
+    clear: { type: 'boolean', description: 'True stops tracking.' },
+  },
+}
 
 /** The words of a command. Nothing is quoted: a name has no spaces, and a note keeps its quotes. */
 const splitWords = (text: string): string[] => text.trim().split(/\s+/).filter(word => word !== '')
@@ -166,6 +195,75 @@ async function handOver($: any, now: View): Promise<string | null> {
 // Enough rows for the whole panel where the terminal shows it above the prompt and not at the side.
 const INLINE_ROWS = 37
 
+/**
+ * Reads the tracked plan again and records what changed; `by` names whose edit it was.
+ * Nothing is read, and the clock is not asked, when no plan is tracked. Never throws.
+ */
+async function reread($: any, by: { agent: string | null; fragment: string } | null): Promise<void> {
+  try {
+    const plan = (await read($, progress)).plan
+    if (plan === null) {
+      return
+    }
+    let text: string
+    try {
+      text = String(await $.fs.read(plan))
+    } catch {
+      await update($, progress, now => (now.plan === plan ? unreadable(now) : now))
+
+      return
+    }
+    const tasks = readPlan(text, baseName(plan))
+    const who = by && { agent: by.agent, task: touched(tasks, text, by.fragment) }
+    const at = await $.clock.now()
+    await update($, progress, now => (now.plan === plan ? observe(now, tasks, who, at) : now))
+  } catch {
+    // The counts stay as they were.
+  }
+}
+
+/** What the tool answers: one line. The summary holds counts only, so it needs no time. */
+async function answerTool($: any, input: Record<string, unknown>): Promise<string> {
+  if (input.clear === true) {
+    await update($, progress, now => clear(now))
+
+    return 'Nothing is tracked now.'
+  }
+  const plan = typeof input.plan === 'string' && input.plan !== '' ? input.plan : null
+  if (plan === null) {
+    await reread($, null)
+  }
+  let state = await read($, progress)
+  // Both inputs are checked before either is applied.
+  if (input.tracker !== undefined) {
+    try {
+      state = setTracker(state, input.tracker, await $.clock.now())
+    } catch {
+      return 'tune: tracker needs an id. Nothing was changed.'
+    }
+  }
+  if (plan !== null) {
+    const cwd = String(await $.session.cwd())
+    const path = resolvePath(cwd, plan)
+    let text: string
+    try {
+      text = String(await $.fs.read(path))
+    } catch {
+      return `tune: ${plan} could not be read. Nothing was changed.`
+    }
+    const tasks = readPlan(text, baseName(path))
+    if (tasks.length === 0) {
+      return `tune: ${plan} has no task with a checkbox. Nothing was changed.`
+    }
+    state = track(state, path, relativeTo(cwd, path), tasks)
+  }
+  const done = state
+  await update($, progress, () => done)
+  const said = summary(shown(done, 0))
+
+  return input.tracker !== undefined && done.tracker !== null ? `Tracker item ${done.tracker.id} noted. ${said}` : said
+}
+
 /** Opens the panel as a person first sees it: nothing is waiting to be confirmed. */
 async function openPane($: any): Promise<void> {
   await update($, confirm, () => null)
@@ -228,6 +326,11 @@ export const register: Register = on => {
       // Without the command the levels and the rules still apply.
     }
     try {
+      await $.tool.register({ name: 'progress', description: TOOL_TEXT, inputSchema: TOOL_SCHEMA, isDeferred: false })
+    } catch {
+      // Without the tool nothing is tracked; everything else still applies.
+    }
+    try {
       const now = await refresh($)
       // The system prompt carries these rules from the first request on.
       await update($, seenBrief, () => now.brief)
@@ -250,6 +353,7 @@ export const register: Register = on => {
         // Another session, or the panel, changed something since this one last looked.
         now = await refresh($)
       }
+      await reread($, null)
       context = await handOver($, now)
     } catch {
       // Never stand between a prompt and the model.
@@ -275,6 +379,37 @@ export const register: Register = on => {
     }
 
     return composed
+  })
+
+  // Answered ahead of the permission check, so that the person is not asked to allow it.
+  on('tool.call', { tool: TOOL }, async ($, e) => {
+    try {
+      return { result: await answerTool($, e as unknown as Record<string, unknown>) }
+    } catch (error) {
+      return { result: `tune: ${reason(error)}` }
+    }
+  })
+
+  // An edit of the tracked plan is read at once, and the tick goes to whoever made it.
+  on('tool.call', { tool: ['Edit', 'Write'] }, async ($, e, next) => {
+    const answer = await next(e)
+    try {
+      const input = e as unknown as Record<string, unknown>
+      const plan = (await read($, progress)).plan
+      if (
+        plan !== null &&
+        answer.deny === undefined &&
+        answer.isError !== true &&
+        resolvePath(String(await $.session.cwd()), String(input.file_path ?? '')) === plan
+      ) {
+        const agent = typeof input.agentId === 'string' ? input.agentId : null
+        await reread($, { agent, fragment: input.tool === 'Edit' ? String(input.new_string ?? '') : '' })
+      }
+    } catch {
+      // Never stand between a tool and its answer.
+    }
+
+    return answer
   })
 
   on('command.run', { command: 'tune' }, async ($, e) => {

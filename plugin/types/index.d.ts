@@ -41,7 +41,47 @@ export type View = {
   problems: string[]
 }
 
+// Copies of the progress state's types in hooks/plan.ts and hooks/progress.ts.
+export type Task = {
+  key: string
+  name: string
+  number: number | null
+  title: string
+  from: number
+  to: number
+  steps: boolean[]
+}
+export type Tick = { at: number; kind: 'agent' | 'main' | 'fix' }
+export type Mark = { agent: string | null; startedAt: number | null; stoppedAt: number | null; ticks: Tick[] }
+export type AgentRun = {
+  id: string
+  type: string
+  apart: boolean
+  startedAt: number
+  endedAt: number | null
+  ended: 'completed' | 'failed' | 'stopped' | null
+}
+export type Tracker = { id: string; title: string; state: string; done: number | null; total: number | null; at: number }
+export type Progress = {
+  plan: string | null
+  label: string
+  unread: boolean
+  tasks: Task[]
+  marks: Record<string, Mark>
+  agents: AgentRun[]
+  tracker: Tracker | null
+}
+
 declare module 'claude-code' {
+  /** The tool the mod registers, so a hook on it is typed like any other tool's. */
+  interface McpToolInputs {
+    mcp__tune__progress: {
+      plan?: string
+      tracker?: { id: string; title?: string; state?: string; done?: number; total?: number }
+      clear?: boolean
+    }
+  }
+
   interface PluginState {
     tune: {
       view: Shaped<View>
@@ -57,6 +97,8 @@ declare module 'claude-code' {
       why: boolean
       /** The profile a delete is waiting to have confirmed. */
       confirm: string | null
+      /** The tracked plan's progress, for this session only. */
+      progress: Shaped<Progress>
     }
   }
 }
