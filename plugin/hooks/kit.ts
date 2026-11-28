@@ -104,7 +104,10 @@ export type FakeIo = {
   tools: Record<string, any>[]
   /** Every path the mod read, in order. */
   reads: string[]
-  /** Run with the path before a read answers; the text read is the file's when the read was asked. */
+  /**
+   * Run with the path before a read answers; the text read is the file's when the read was asked, unless
+   * the path became a link meanwhile: then the read opens it after the swap and gets the path's text then.
+   */
   onRead?: (path: string) => void | Promise<void>
   /** How many agents the stand-in `agent.spawn` started. */
   spawned: number
@@ -299,8 +302,12 @@ export function fake(on: any, world: FakeIo): void {
     // A real path that is not a key is served from the key that lands on it.
     const key = path in world.files ? path : (Object.keys(world.files).find(each => resolve(each) === path) ?? path)
     const read = answer(world.io.read(key))
+    if (world.onRead === undefined) {
+      return read
+    }
+    const wasLink = path in world.links
 
-    return world.onRead === undefined ? read : Promise.resolve(world.onRead(path)).then(() => read)
+    return Promise.resolve(world.onRead(path)).then(() => (!wasLink && path in world.links ? answer(world.io.read(path)) : read))
   })
   // A key of world.files is a file, landing where world.links says or on itself; a folder above one is a
   // directory. A link whose target is neither leads nowhere (`other`, no real path); anything else is

@@ -240,8 +240,8 @@ test('the panel says when the main conversation runs at another effort, and what
 
   expect(text).toMatch(/you\s+fable \/ high/)
   expect(text).toMatch(/now: medium - set with \/effort high/)
-  expect(text).toMatch(/executor\s+sonnet-5-5 \/ medium\s+42K/)
-  expect(text.includes('haiku-5-5 / high')).toBe(false)
+  expect(text).toMatch(/executor\s+sonnet \/ medium\s+42K/)
+  expect(text).not.toMatch(/writer\s+haiku \/ high\s+9K/)
   await ui.unmount()
 })
 

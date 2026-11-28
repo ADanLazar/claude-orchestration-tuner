@@ -258,6 +258,9 @@ async function rereadNow($: any, by: { agent: string | null; fragment: string; t
         throw new Error('not inside the project now')
       }
       text = String(await $.fs.read(real))
+      if (!(await stillLands($, plan, real, anywhere))) {
+        throw new Error('swapped during the read')
+      }
     } catch {
       await update($, progress, now => (now.plan === plan ? unreadable(now) : now))
 
@@ -302,9 +305,9 @@ const spelledInside = (base: string, path: string): boolean =>
 
 /**
  * Where an already resolved path really lands when it is a .md file inside the session's folder, and
- * null when it is not: by its spelling first (no disk access), then by where it lands. A path that leads
- * nowhere counts as inside, and is answered as given, when the nearest folder above it that is there
- * lands inside. What follows the check reads the path it answers.
+ * null when it is not: by its spelling first (no disk access), then by where it lands, which must also be
+ * a .md file inside. A path that leads nowhere has nothing to read: null. What follows the check reads
+ * the path it answers.
  */
 async function insideProject($: any, path: string): Promise<string | null> {
   const base = resolvePath(String(await $.session.cwd()), '')
@@ -315,17 +318,17 @@ async function insideProject($: any, path: string): Promise<string | null> {
   if (typeof root !== 'string' || root === '') {
     return null
   }
-  for (let at = path, own = true; ; at = at.slice(0, at.lastIndexOf('/')), own = false) {
-    const real = at === base ? root : await landing($, at)
-    if (real === undefined) {
-      return null
-    }
-    if (real !== null) {
-      const inside = real.startsWith(`${root}/`) || (!own && real === root)
+  const real = await landing($, path)
 
-      return !inside ? null : own ? real : path
-    }
-  }
+  return typeof real === 'string' && spelledInside(root, real) ? real : null
+}
+
+/**
+ * The second look, after a read: whether the path still lands on the real path read. A plan the model
+ * named is checked whole again; a plan the person tracked must still be its own real path.
+ */
+async function stillLands($: any, path: string, real: string, anywhere: boolean): Promise<boolean> {
+  return (anywhere ? await landing($, real) : await insideProject($, path)) === real
 }
 
 /**
@@ -375,6 +378,9 @@ async function answerTool($: any, input: Record<string, unknown>, anywhere = fal
       } catch {
         return unread
       }
+      if (!(await stillLands($, path, real, anywhere))) {
+        return unread
+      }
       const tasks = readPlan(text, baseName(path))
       if (tasks.length === 0) {
         return `tune: ${oneLine(plan, 200)} has no task with a checkbox. Nothing was changed.`
@@ -415,14 +421,15 @@ async function trackCommand($: any, typed: string, anywhere: boolean): Promise<s
   return answerTool($, { plan: typed.trim().replace(/^track\s+/, '') }, anywhere)
 }
 
+/** An engine's model id named as the rows name models: its family when the id holds one, else the id without `claude-`. */
+const familyOf = (model: string): string => MODELS.find(name => model.includes(name)) ?? model.replace(/^claude-/, '')
+
 /** Each agent's id, mapped to the level it runs at, its model named as the row names it: `sonnet / medium`. `{}` when the list cannot be had. */
 async function levelsOf($: any): Promise<Record<string, string>> {
   try {
     const levels: Record<string, string> = {}
     for (const agent of await $.agent.list()) {
-      const model = String(agent.model ?? '?')
-      const family = MODELS.find(name => model.includes(name)) ?? model.replace(/^claude-/, '')
-      levels[String(agent.id)] = `${family} / ${agent.effort ?? '-'}`
+      levels[String(agent.id)] = `${familyOf(String(agent.model ?? '?'))} / ${agent.effort ?? '-'}`
     }
 
     return levels
@@ -591,6 +598,9 @@ async function trackFromPrompt($: any, prompt: string): Promise<void> {
     try {
       text = String(await $.fs.read(real))
     } catch {
+      continue
+    }
+    if (!(await stillLands($, path, real, false))) {
       continue
     }
     const tasks = readPlan(text, baseName(path))
@@ -1289,7 +1299,7 @@ export const register: Register = on => {
         {running.slice(0, 12).map((agent: any) => (
           <Text>
             {String(agent.type).replace(/^tune:/, '').padEnd(19)}
-            {String(agent.model ?? '?').replace('claude-', '')} / {agent.effort ?? '-'}
+            {familyOf(String(agent.model ?? '?'))} / {agent.effort ?? '-'}
             {typeof agent.tokenCount === 'number' ? `   ${thousands(agent.tokenCount)}` : ''}
           </Text>
         ))}
