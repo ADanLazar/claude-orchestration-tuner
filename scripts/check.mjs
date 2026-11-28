@@ -13,6 +13,7 @@ const faults = []
 const fault = (file, why) => faults.push(`${relative(root, file) || '.'}: ${why}`)
 
 const PROMPT_LIMIT = 2500
+const SKILL_LIMIT = 3000
 // Files that may name the owner; this script names the words it looks for.
 const MAY_NAME_OWNER = new Set(
   ['LICENSE', '.claude-plugin/marketplace.json', 'plugin/.claude-plugin/plugin.json', 'scripts/check.mjs'].map(p =>
@@ -135,6 +136,26 @@ for (const name of files) {
     fault(file, 'no prompt')
   } else if (agent.body.length > PROMPT_LIMIT) {
     fault(file, `the prompt is ${agent.body.length} characters; the limit is ${PROMPT_LIMIT}`)
+  }
+}
+
+const skillFile = join(plugin, 'skills', 'shape', 'SKILL.md')
+const skill = existsSync(skillFile) ? readAgent(readFileSync(skillFile, 'utf8')) : undefined
+if (skill === undefined) {
+  fault(skillFile, 'the skill is missing')
+} else if (!skill) {
+  fault(skillFile, 'no header between two --- lines')
+} else {
+  if (skill.keys.name !== 'shape') {
+    fault(skillFile, `name is "${skill.keys.name}", the skill is "shape"`)
+  }
+  if (!skill.keys.description?.startsWith('Use')) {
+    fault(skillFile, 'the description is missing or does not start with "Use"')
+  }
+  if (skill.body.length === 0) {
+    fault(skillFile, 'no text after the header')
+  } else if (skill.body.length > SKILL_LIMIT) {
+    fault(skillFile, `the text is ${skill.body.length} characters; the limit is ${SKILL_LIMIT}`)
   }
 }
 
