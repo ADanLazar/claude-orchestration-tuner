@@ -125,6 +125,26 @@ test('the same when a tick resumes it', () => {
   expect(edited.marks[K1]!.ticks).toEqual([{ at: 9000, kind: 'agent' }])
 })
 
+test('a resumed agent that moves on leaves the first task\'s time alone', () => {
+  let ran = agentStarted(tracked(), executor('a1', 'Do Task 1'), 0)
+  ran = observe(ran, tasks('x  ', '    ', '  '), { agent: 'a1', task: 0, tick: true }, 50000)
+  ran = agentEnded(ran, 'a1', 'completed', 60000)
+  expect(elapsed(ran, K1, 60000)).toBe(60000)
+
+  const again = agentStarted(ran, executor('a1', 'Go on'), 100000)
+  const moved = observe(again, tasks('x  ', 'x   ', '  '), { agent: 'a1', task: 1, tick: true }, 120000)
+  expect(elapsed(moved, K1, 200000)).toBe(60000)
+
+  const byTick = observe(ran, tasks('x  ', 'x   ', '  '), { agent: 'a1', task: 1, tick: true }, 120000)
+  expect(elapsed(byTick, K1, 200000)).toBe(60000)
+})
+
+test('an observe that changes nothing hands back the same state', () => {
+  const state = observe(agentStarted(tracked(), executor('a1', 'Do Task 1'), 0), tasks('x  ', '    ', '  '), null, 1000)
+  expect(observe(state, tasks('x  ', '    ', '  '), null, 3000)).toBe(state)
+  expect(observe(state, tasks('xx ', '    ', '  '), null, 3000) === state).toBe(false)
+})
+
 test('a resumed agent\'s estimate uses this run\'s pace', () => {
   let state = agentStarted(from('     '), executor('a1', 'Do Task 1'), 0)
   state = tick(state, 'a1', 10000, 'x    ')

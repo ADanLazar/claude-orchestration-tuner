@@ -172,3 +172,36 @@ test('with the settings showing, pressing progress switches the view', async ($,
   expect((await pane.find({ type: 'Select', key: 'effort:executor' })) !== undefined).toBe(false)
   await pane.unmount()
 })
+
+test('with the progress view open, pressing panel switches to the settings', async ($, on) => {
+  const world = await withPlan($, on, true)
+  await $.command.run({ command: 'tune', args: 'progress' } as any)
+  const ui = await $.ui.mount({ ...ROW, surface: 'terminal' })
+  await ui.press({ key: 'panel' })
+  await ui.unmount()
+
+  expect(world.opened.length).toBe(world.closed.length + 1)
+  expect(world.openArgs[world.openArgs.length - 1]!.focus).toBe(true)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await pane.find({ type: 'Select', key: 'effort:executor' })) !== undefined).toBe(true)
+  await pane.unmount()
+})
+
+test('the two buttons are drawn apart', async ($, on) => {
+  await withPlan($, on, true)
+  const ui = await $.ui.mount({ ...ROW, surface: 'terminal' })
+  const box: any = await ui.find({ type: 'Box' })
+  // Children as drawn: element descriptions, a key in their props and their text in their children.
+  const children: any[] = box.children
+  const text = (child: any): string => (child.children ?? []).join('')
+  const at = (key: string): number => children.findIndex(child => child.type === 'Button' && child.props.key === key)
+  expect(at('progress') >= 0 && at('panel') > at('progress')).toBe(true)
+  const between = children.slice(at('progress') + 1, at('panel'))
+  expect(between.some(child => child.type === 'Text' && /^\s+$/.test(text(child)))).toBe(true)
+  // A button reads as its label, and the panel button's key hint before its label.
+  const drawn = children
+    .map(child => (child.type !== 'Button' ? text(child) : `${child.props.hotkey ? `${child.props.hotkey}: ` : ''}${child.props.label}`))
+    .join('')
+  expect(drawn.includes('progresst')).toBe(false)
+  await ui.unmount()
+})

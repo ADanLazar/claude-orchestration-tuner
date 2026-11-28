@@ -902,3 +902,64 @@ test("a resumed agent's time leaves out the gap", async ($, on) => {
   await clock.set(12000)
   expect(await statusOf($)).toMatch(/^▶ 1 Read the file.*0m07s/m)
 })
+
+test("an agent's model is named as the row names models", async ($, on) => {
+  mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, { plan: 'docs/plans/export.md' })
+  await spawn($, ON_TASK_1)
+  expect(await statusOf($)).toMatch(/^ {5}executor sonnet \/ medium$/m)
+
+  world.agents = world.agents.map((agent: any) => ({ ...agent, model: 'claude-opus-5-5' }))
+  expect(await statusOf($)).toMatch(/^ {5}executor opus \/ medium$/m)
+  world.agents = world.agents.map((agent: any) => ({ ...agent, model: 'claude-mythic-1' }))
+  expect(await statusOf($)).toMatch(/^ {5}executor mythic-1 \/ medium$/m)
+})
+
+test('with nothing tracked and nobody running, status asks nothing of the clock', async ($, on) => {
+  let asked = 0
+  on('clock.*', (_: unknown, e: any, next: any) => {
+    if (next.event === 'clock.now') {
+      asked += 1
+    }
+
+    return next(e)
+  })
+  mock.clock(on, { now: 0 })
+  fake(on, makeIo())
+  await $.session.start(START)
+  await spawn($, 'Look around')
+  await report($, 'a1', 'completed')
+
+  const before = asked
+  expect(await statusOf($)).toBe('No plan is tracked.')
+  expect(asked).toBe(before)
+})
+
+test("a session's end waits for the plan's work already queued", async ($, on) => {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+
+  let release = () => {}
+  const held = new Promise<void>(done => (release = done))
+  world.onRead = async path => {
+    if (path === PLAN_PATH) {
+      await held
+    }
+  }
+  const tracking = tune($, { plan: 'docs/plans/export.md' })
+  await clock.settle()
+  const ended = $.session.end(SESSION_END as any)
+  await clock.settle()
+  release()
+  await tracking
+  expect(await ended).toEqual({ sessionId: 'session-1' })
+  world.onRead = undefined
+  expect(await statusOf($)).toBe('No plan is tracked.')
+})

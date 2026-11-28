@@ -1,7 +1,7 @@
 // The pane's progress view: how it opens, what it draws, and how it gives way to the settings.
 import { expect, mock, test } from 'claude-code/testing'
 
-import { fake, makeIo, PANE, PLAN_PATH, PLAN_TEXT, START, words } from './kit'
+import { BUILD, copy, fake, makeIo, PANE, PLAN_PATH, PLAN_TEXT, START, words } from './kit'
 
 const tune = ($: any, args: string): Promise<any> => $.command.run({ command: 'tune', args } as any)
 const has = async (ui: any, type: string, key: string): Promise<boolean> => (await ui.find({ type, key })) !== undefined
@@ -39,9 +39,11 @@ test('the progress view does not take the keyboard', async ($, on) => {
   await $.session.start(START)
   await tune($, 'progress')
   expect(world.openArgs[world.openArgs.length - 1]!.focus).toBe(undefined)
+  expect(world.openArgs[world.openArgs.length - 1]!.closeOnEscape).toBe(undefined)
   await tune($, 'close')
   await tune($, '')
   expect(world.openArgs[world.openArgs.length - 1]!.focus).toBe(true)
+  expect(world.openArgs[world.openArgs.length - 1]!.closeOnEscape).toBe(true)
 })
 
 test("asking for the other view re-opens the pane with that view's focus", async ($, on) => {
@@ -61,17 +63,56 @@ test("asking for the other view re-opens the pane with that view's focus", async
 })
 
 test('a button switches between the views', async ($, on) => {
-  fake(on, makeIo())
+  const world = makeIo({ profiles: { fast: { ...copy(BUILD), name: 'fast' } }, inForce: 'fast' })
+  fake(on, world)
   await $.session.start(START)
+  await tune($, '')
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await has(ui, 'Select', 'effort:executor')).toBe(true)
+  await ui.press({ key: 'delete' })
+  expect(await words(ui)).toContain('Press delete again')
 
   await ui.press({ key: 'view:progress' })
   expect(await words(ui)).toContain('No plan is tracked.')
   expect(await has(ui, 'Select', 'effort:executor')).toBe(false)
+  expect(world.openArgs[world.openArgs.length - 1]!.focus).toBe(undefined)
 
   await ui.press({ key: 'view:settings' })
   expect(await has(ui, 'Select', 'effort:executor')).toBe(true)
+  expect(world.openArgs[world.openArgs.length - 1]!.focus).toBe(true)
+  expect((await words(ui)).includes('Press delete again')).toBe(false)
+  await ui.unmount()
+})
+
+test('progress and close work in the command field', async ($, on) => {
+  const world = makeIo()
+  fake(on, world)
+  await $.session.start(START)
+  await tune($, '')
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.input({ key: 'command', text: 'progress' })
+  expect(await words(ui)).toContain('No plan is tracked.')
+  expect(await has(ui, 'Select', 'effort:executor')).toBe(false)
+  expect(world.openArgs[world.openArgs.length - 1]!.focus).toBe(undefined)
+  await ui.unmount()
+
+  await tune($, '')
+  const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const closed = world.closed.length
+  await again.input({ key: 'command', text: 'close' })
+  expect(world.closed.length).toBe(closed + 1)
+  expect(world.closed[world.closed.length - 1]).toBe('tune')
+  await again.unmount()
+})
+
+test('shown above the prompt, the progress view says how to have it at the side', async ($, on) => {
+  fake(on, makeIo())
+  await $.session.start(START)
+  const answer = await $.command.run({ command: 'tune', args: 'progress', presentation: { isFullscreen: false, columns: 120 } } as any)
+  expect(String(answer.text)).toContain('above the prompt')
+  expect(String(answer.text)).toContain('For a panel at the side, widen the window or type /tui fullscreen.')
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement: 'inline' }, surface: 'terminal' } as any)
+  expect(await words(ui)).toContain('For a panel at the side, widen the window or type /tui fullscreen.')
   await ui.unmount()
 })
 
@@ -281,5 +322,26 @@ test('the view counts again when a reported agent ticks', async ($, on) => {
   const later = await task1Time(ui)
   // The plan's two-second re-read alone would show two seconds more.
   expect(later - after).toBe(3)
+  await ui.unmount()
+})
+
+test('a redraw timer that died is started again', async ($, on) => {
+  // Outermost, before the clock: a refused period ends the engine's interval, and the module is not told.
+  let refuse = false
+  on('clock.*', (_: unknown, e: any, next: any) => (refuse && next.event === 'clock.every' ? { deny: 'refused' } : next(e)))
+  const { clock } = await running($, on)
+  await tune($, 'progress')
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 80 }, surface: 'terminal' })
+  await clock.advance(2000)
+  expect(await words(ui)).toContain('0m02s')
+
+  refuse = true
+  await clock.advance(2000)
+  refuse = false
+  await clock.advance(10000)
+  await spawn($)
+  const before = await words(ui)
+  await clock.advance(3000)
+  expect(await words(ui)).not.toBe(before)
   await ui.unmount()
 })

@@ -66,7 +66,9 @@ function link(marks: Record<string, Mark>, id: string, key: string, now: number)
   const out = Object.fromEntries(
     Object.entries(marks).map(([other, mark]): [string, Mark] => {
       const last = mark.ticks[mark.ticks.length - 1]
-      const off = { ...mark, agent: null, had: true, stoppedAt: last ? last.at : mark.startedAt }
+      // Never before its start: a resumed agent's start is the resume, and its last tick may be older.
+      const stop = mark.startedAt === null ? (last?.at ?? null) : Math.max(mark.startedAt, last?.at ?? mark.startedAt)
+      const off = { ...mark, agent: null, had: true, stoppedAt: mark.stoppedAt ?? stop }
       return [other, other !== key && mark.agent === id ? off : mark]
     }),
   )
@@ -170,15 +172,23 @@ export function observe(
   }
 
   let own: number | null = null
+  let changed = state.unread
   const run = by && by.agent !== null ? runOf(state, by.agent) : undefined
   if (by && run && isTicker(run.type)) {
     agents = running(agents, run.id)
-    if (run.endedAt !== null) marks = resumed(marks, run.id, now)
+    if (run.endedAt !== null) {
+      marks = resumed(marks, run.id, now)
+      changed = true
+    }
     const index = by.task ?? rise.findIndex(count => count > 0)
     const task = tasks[index]
     // An edit that ticked nothing links nothing; a tick a timed read saw first still links.
     if (index >= 0 && task && ((rise[index] ?? 0) > 0 || by.tick)) {
       own = index
+      const linked =
+        markOf(marks, task.key)?.agent === run.id &&
+        Object.entries(marks).every(([key, mark]) => key === task.key || mark.agent !== run.id)
+      changed = changed || !linked
       marks = link(marks, run.id, task.key, now)
       const count = rise[index] ?? 0
       if (count > 0) add(task.key, 'agent', count)
@@ -196,7 +206,14 @@ export function observe(
     if (!main && onIt && onIt.endedAt === null) add(task.key, 'agent', count)
     else add(task.key, agent === null && !mark?.had && !other ? 'main' : 'fix', count)
   })
-  return { ...state, unread: false, tasks, marks, agents }
+  // The same tasks, read again: nothing to draw again.
+  const same =
+    tasks.length === state.tasks.length &&
+    tasks.every((task, index) => {
+      const held = state.tasks[index]
+      return held !== undefined && held.key === task.key && held.steps.join() === task.steps.join()
+    })
+  return same && !changed ? state : { ...state, unread: false, tasks, marks, agents }
 }
 
 export function stateOf(state: Progress, key: string): TaskState {

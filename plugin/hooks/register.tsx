@@ -275,9 +275,9 @@ async function rereadNow($: any, by: { agent: string | null; fragment: string; t
     })
     // An ended agent its own tick marked running again is watched as well, and counted in an open view.
     if (isRunning(done)) {
-      startPoll($)
+      await startPoll($)
       if (!was) {
-        ensureBeat($)
+        await ensureBeat($)
       }
     }
   } catch {
@@ -415,12 +415,14 @@ async function trackCommand($: any, typed: string, anywhere: boolean): Promise<s
   return answerTool($, { plan: typed.trim().replace(/^track\s+/, '') }, anywhere)
 }
 
-/** Each agent's id, mapped to the level it runs at: `sonnet-5-5 / medium`. `{}` when the list cannot be had. */
+/** Each agent's id, mapped to the level it runs at, its model named as the row names it: `sonnet / medium`. `{}` when the list cannot be had. */
 async function levelsOf($: any): Promise<Record<string, string>> {
   try {
     const levels: Record<string, string> = {}
     for (const agent of await $.agent.list()) {
-      levels[String(agent.id)] = `${String(agent.model ?? '?').replace('claude-', '')} / ${agent.effort ?? '-'}`
+      const model = String(agent.model ?? '?')
+      const family = MODELS.find(name => model.includes(name)) ?? model.replace(/^claude-/, '')
+      levels[String(agent.id)] = `${family} / ${agent.effort ?? '-'}`
     }
 
     return levels
@@ -429,10 +431,10 @@ async function levelsOf($: any): Promise<Record<string, string>> {
   }
 }
 
-/** What /tune status prints. With nothing tracked and no agent known, neither the clock nor the list is asked. */
+/** What /tune status prints. With nothing tracked and no agent running, neither the clock nor the list is asked. */
 async function statusText($: any, width: number): Promise<string> {
   const state = await read($, progress)
-  if (state.plan === null && state.agents.length === 0) {
+  if (state.plan === null && !isRunning(state)) {
     return 'No plan is tracked.'
   }
 
@@ -441,12 +443,17 @@ async function statusText($: any, width: number): Promise<string> {
 
 // While an agent runs, the plan is read again this often: edits made through a shell are seen too.
 const POLL_MS = 2000
-// The one re-read timer: going only while an agent runs.
-let poll: { cancel: () => void } | null = null
+type Timer = { cancel: () => void }
+// The one re-read timer: going only while an agent runs. `pollRan`: when it last ran, or was started.
+let poll: Timer | null = null
+let pollRan = 0
 
-function stopPoll(): void {
-  const timer = poll
-  poll = null
+/** Stops `only`, or the current timer when none is named: an old timer's callback stops itself and no other. */
+function stopPoll(only?: Timer): void {
+  const timer = only ?? poll
+  if (timer === poll) {
+    poll = null
+  }
   try {
     timer?.cancel()
   } catch {
@@ -458,17 +465,18 @@ function stopPoll(): void {
 let polling = false
 
 /** One period of the re-read: the plan, then each running agent as the engine lists it. Never throws. */
-async function pollOnce($: any): Promise<void> {
+async function pollOnce($: any, timer: Timer): Promise<void> {
   if (polling) {
     return
   }
   polling = true
   try {
     if (!isRunning(await read($, progress))) {
-      stopPoll()
+      stopPoll(timer)
 
       return
     }
+    pollRan = await $.clock.now()
     await reread($, null)
     const listed: any[] = await $.agent.list()
     const at = await $.clock.now()
@@ -496,20 +504,34 @@ async function pollOnce($: any): Promise<void> {
   }
 }
 
-function startPoll($: any): void {
-  if (poll === null) {
-    poll = $.clock.every(POLL_MS, () => pollOnce($))
+/**
+ * Starts the re-read timer if none is going, or if the one held has not run for three periods: the
+ * engine ends an interval after a refused period without telling the module.
+ */
+async function startPoll($: any): Promise<void> {
+  const at = await $.clock.now()
+  if (poll !== null && at - pollRan <= 3 * POLL_MS) {
+    return
   }
+  stopPoll()
+  pollRan = at
+  const timer: Timer = $.clock.every(POLL_MS, () => (poll === timer ? pollOnce($, timer) : stopPoll(timer)))
+  poll = timer
 }
 
 // While the progress view is open and an agent runs, the view draws again this often.
 const BEAT_MS = 1000
-// The one redraw timer: going only while the open progress view has something to count.
-let beating: { cancel: () => void } | null = null
+// The one redraw timer: going only while the open progress view has something to count. `beatRan`: when
+// it last ran, or was started.
+let beating: Timer | null = null
+let beatRan = 0
 
-function stopBeat(): void {
-  const timer = beating
-  beating = null
+/** Stops `only`, or the current timer when none is named: an old timer's callback stops itself and no other. */
+function stopBeat(only?: Timer): void {
+  const timer = only ?? beating
+  if (timer === beating) {
+    beating = null
+  }
   try {
     timer?.cancel()
   } catch {
@@ -517,14 +539,26 @@ function stopBeat(): void {
   }
 }
 
-/** Starts the redraw timer if none is going. Each period it stops itself when there is nothing to count. */
-function ensureBeat($: any): void {
-  if (beating !== null) {
+/**
+ * Starts the redraw timer if none is going, or if the one held has not run for three periods. Each period
+ * it stops itself when there is nothing to count.
+ */
+async function ensureBeat($: any): Promise<void> {
+  const at = await $.clock.now()
+  if (beating !== null && at - beatRan <= 3 * BEAT_MS) {
     return
   }
-  beating = $.clock.every(BEAT_MS, async () => {
+  stopBeat()
+  beatRan = at
+  const timer: Timer = $.clock.every(BEAT_MS, async () => {
     try {
-      if ((await isPaneOpen($)) && (await read($, pane)) === 'progress' && isRunning(await read($, progress))) {
+      if (
+        beating === timer &&
+        (await isPaneOpen($)) &&
+        (await read($, pane)) === 'progress' &&
+        isRunning(await read($, progress))
+      ) {
+        beatRan = await $.clock.now()
         await update($, beat, n => (n ?? 0) + 1)
 
         return
@@ -532,14 +566,15 @@ function ensureBeat($: any): void {
     } catch {
       // Nothing to draw: the timer stops, and the next opening or agent starts it again.
     }
-    stopBeat()
+    stopBeat(timer)
   })
+  beating = timer
 }
 
 /** Starts the redraw timer when an agent runs; with none, no timer is started. */
 async function beatIfRunning($: any): Promise<void> {
   if (isRunning(await read($, progress))) {
-    ensureBeat($)
+    await ensureBeat($)
   }
 }
 
@@ -600,9 +635,9 @@ async function openPane($: any, which: 'settings' | 'progress' = 'settings'): Pr
     await $.ui.close({ id: PANE })
   }
   await update($, pane, () => which)
-  // The engine takes `focus` as true or left out; false is refused.
-  const focus = which === 'settings' ? { focus: true } : {}
-  await $.ui.open({ id: PANE, title: 'Tune', ...focus, closeOnEscape: true, columns: 50, rows: INLINE_ROWS })
+  // The engine takes `focus` as true or left out; false is refused. A watched view does not vanish at a stray Esc.
+  const keys = which === 'settings' ? { focus: true, closeOnEscape: true } : {}
+  await $.ui.open({ id: PANE, title: 'Tune', ...keys, columns: 50, rows: INLINE_ROWS })
 }
 
 /** Closes the panel. A delete nobody confirmed is forgotten with it. */
@@ -619,6 +654,9 @@ async function isPaneOpen($: any): Promise<boolean> {
   }
 }
 
+// A pane docks at the side when the window is wide enough, and shows above the prompt when it is not.
+const SIDE = 'For a panel at the side, widen the window or type /tui fullscreen.'
+
 /** What /tune answers once the panel is open: where it is, and how to close it. */
 function openedText(presentation: { isFullscreen?: boolean } | undefined): string {
   const close = 'Close it with Esc, its close button, or /tune close.'
@@ -626,7 +664,7 @@ function openedText(presentation: { isFullscreen?: boolean } | undefined): strin
     return `The Tune panel is open at the side. ${close}`
   }
   if (presentation?.isFullscreen === false) {
-    return `The Tune panel is open above the prompt. ${close} For a panel at the side, type /tui fullscreen.`
+    return `The Tune panel is open above the prompt. ${close} ${SIDE}`
   }
 
   return `The Tune panel is open. ${close}`
@@ -639,7 +677,7 @@ function progressOpenedText(presentation: { isFullscreen?: boolean } | undefined
     return `The Tune progress view is open at the side. ${close}`
   }
   if (presentation?.isFullscreen === false) {
-    return `The Tune progress view is open above the prompt. ${close}`
+    return `The Tune progress view is open above the prompt. ${close} ${SIDE}`
   }
 
   return `The Tune progress view is open. ${close}`
@@ -690,8 +728,8 @@ export const register: Register = on => {
     try {
       // After a reload the state is kept: an agent it holds as running is watched again.
       if (isRunning(await read($, progress))) {
-        startPoll($)
-        ensureBeat($)
+        await startPoll($)
+        await ensureBeat($)
       }
     } catch {
       // The next re-read starts the watch.
@@ -706,7 +744,12 @@ export const register: Register = on => {
     try {
       stopPoll()
       stopBeat()
-      await update($, progress, () => NOTHING)
+      // After the plan's work already queued, so that none of it applies its result to the next session.
+      await queued(async () => {
+        stopPoll()
+        stopBeat()
+        await update($, progress, () => NOTHING)
+      })
     } catch {
       // A session ends whatever happens to Tune.
     }
@@ -802,8 +845,8 @@ export const register: Register = on => {
         const apart = (e as { isolation?: unknown }).isolation === 'worktree' || (await elsewhere($, id))
         const at = await $.clock.now()
         await update($, progress, now => agentStarted(now, { id, type: e.subagentType, prompt: e.prompt, apart }, at))
-        startPoll($)
-        ensureBeat($)
+        await startPoll($)
+        await ensureBeat($)
       }
     } catch {
       // Never stand between an agent and its start.
@@ -928,12 +971,16 @@ export const register: Register = on => {
             }}
           />
         )}
+        {watched && <Text> </Text>}
         <Button
           key="panel"
           label="panel"
           hotkey="t"
           plain
-          onPress={async () => ((await isPaneOpen($)) ? closePane($) : openPane($))}
+          onPress={async () =>
+            // Open on the progress view, it switches to the settings, as the progress button switches the other way.
+            (await isPaneOpen($)) && (await read($, pane)) === 'settings' ? closePane($) : openPane($)
+          }
         />
       </Box>
     )
@@ -951,21 +998,21 @@ export const register: Register = on => {
       return <Text dimColor>{rowText(now, mine, e.props.bodyColumns, count(state))}</Text>
     }
     const hint = e.surface === 'terminal' && e.props.placement === 'inline' && (
-      <Text dimColor>Shown above the prompt. For a panel at the side, type /tui fullscreen.</Text>
+      <Text dimColor>Shown above the prompt. {SIDE}</Text>
     )
     const closeButton = <Button key="close" label="close" role="dismiss" onPress={() => closePane($)} />
     if ((await read($, pane)) === 'progress') {
       await read($, beat)
-      // With nothing tracked and no agent known, neither the clock nor the list is asked.
+      // With nothing tracked and no agent running, neither the clock nor the list is asked.
       const drawn =
-        state.plan === null && state.agents.length === 0
+        state.plan === null && !isRunning(state)
           ? ['No plan is tracked.']
           : lines(shown(state, await $.clock.now(), await levelsOf($)), e.props.bodyColumns)
 
       return (
         <Box flexDirection="column">
           <Box>
-            <Button key="view:settings" label="settings" onPress={() => update($, pane, () => 'settings' as const)} />
+            <Button key="view:settings" label="settings" onPress={() => openPane($, 'settings')} />
             {closeButton}
             <Text dimColor> Tune · progress</Text>
           </Box>
@@ -991,6 +1038,18 @@ export const register: Register = on => {
         placeholder="a tune command, for example: set notes Ask before adding a dependency"
         onSubmit={async value => {
           const typed = splitWords(value)
+          // As /tune progress and /tune close do.
+          if (typed.length === 1 && typed[0] === 'progress') {
+            await openPane($, 'progress')
+            await beatIfRunning($)
+
+            return
+          }
+          if (typed.length === 1 && typed[0] === 'close') {
+            await closePane($)
+
+            return
+          }
           if (typed.length === 1 && typed[0] === 'status') {
             const text = await statusText($, e.props.bodyColumns)
             await update($, message, () => text)
@@ -1059,7 +1118,7 @@ export const register: Register = on => {
             key="view:progress"
             label="progress"
             onPress={async () => {
-              await update($, pane, () => 'progress' as const)
+              await openPane($, 'progress')
               await beatIfRunning($)
             }}
           />

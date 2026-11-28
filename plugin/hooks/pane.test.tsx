@@ -268,7 +268,7 @@ test('/tune says where the panel is, by the layout of the terminal', async ($, o
   const full = await $.command.run({ command: 'tune', args: '', presentation: { isFullscreen: true, columns: 180 } } as any)
 
   expect(classic.text).toContain('above the prompt')
-  expect(classic.text).toContain('/tui fullscreen')
+  expect(classic.text).toContain('For a panel at the side, widen the window or type /tui fullscreen.')
   expect(full.text).toContain('at the side')
   expect((full.text ?? '').includes('/tui')).toBe(false)
 })
@@ -307,7 +307,7 @@ test('shown above the prompt, the panel says how to have it at the side', async 
   fake(on, makeIo())
   await $.session.start(START)
   const inline = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement: 'inline' }, surface: 'terminal' } as any)
-  expect(await words(inline)).toMatch(/\/tui fullscreen/)
+  expect(await words(inline)).toContain('Shown above the prompt. For a panel at the side, widen the window or type /tui fullscreen.')
   await inline.unmount()
 
   const docked = await $.ui.mount({ ...PANE, surface: 'terminal' })
