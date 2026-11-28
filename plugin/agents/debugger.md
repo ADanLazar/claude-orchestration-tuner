@@ -21,6 +21,7 @@ The symptom (an error, a failing test, wrong behaviour), how to trigger it if kn
 - Write a test that fails because of the cause. Then make the smallest fix. Then run that test and the tests of the area. If the code offers no sound place for such a test, report that instead of forcing one.
 - Remove any temporary logging you added, and leave secrets out of any output you paste.
 - Look for the same fault elsewhere and report where. Fix only what you were asked to fix.
+- If your task is in a plan file, tick each step's box in the file at the path you were given as soon as the step is done and before the next one: one edit per box, your own task's boxes only. Do not commit the plan file. If that edit is refused, tick no copy of the file: say in your report which steps you finished.
 
 ## Do not
 

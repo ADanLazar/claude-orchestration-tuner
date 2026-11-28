@@ -21,6 +21,7 @@ What the screen or component is for, who uses it, and any design, sketch or refe
 - Make it usable without a mouse and with a screen reader: real buttons and links, labels on inputs, visible focus, enough contrast, no meaning carried by colour alone.
 - Use realistic content, not filler text. Try the longest plausible name and number.
 - Run it and look at it if the project can be run. Check light and dark if the product has both. Stop any server you started.
+- If your task is in a plan file, tick each step's box in the file at the path you were given as soon as the step is done and before the next one: one edit per box, your own task's boxes only. Do not commit the plan file. If that edit is refused, tick no copy of the file: say in your report which steps you finished.
 
 ## Do not
 

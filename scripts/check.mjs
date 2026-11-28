@@ -23,6 +23,10 @@ const FORBIDDEN = /\bDan\b|\bomc\b|oh-my-?claude/i
 const HEADER_KEYS = new Set(['name', 'description', 'model', 'effort', 'disallowedTools'])
 // Personas that report and must never edit.
 const READ_ONLY = new Set(['code-reviewer', 'security-reviewer', 'investigator'])
+// Personas that edit and tick a plan's boxes as they go; the planner writes the plan so it can be ticked.
+const TICKERS = ['executor', 'test-engineer', 'writer', 'debugger', 'designer']
+const TICK_START = "- If your task is in a plan file, tick each step's box"
+const PLAN_FORMAT = '- Write each task as a `### Task N: title` heading and each step under it as a `- [ ]` line. Progress is read from those boxes.'
 
 function readJson(file) {
   try {
@@ -116,6 +120,16 @@ for (const name of files) {
   }
   if (READ_ONLY.has(role) && agent.keys.disallowedTools !== 'Write, Edit') {
     fault(file, 'a persona that only reads must carry "disallowedTools: Write, Edit"')
+  }
+  const bodyLines = agent.body.split('\n')
+  const ticks = bodyLines.some(line => line.startsWith(TICK_START))
+  if (TICKERS.includes(role) && !ticks) {
+    fault(file, 'the line that tells it to tick the plan is missing')
+  } else if (!TICKERS.includes(role) && ticks) {
+    fault(file, 'only a persona that edits carries the tick line')
+  }
+  if (role === 'planner' && !bodyLines.includes(PLAN_FORMAT)) {
+    fault(file, 'the plan format line is missing')
   }
   if (agent.body.length === 0) {
     fault(file, 'no prompt')

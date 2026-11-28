@@ -20,6 +20,7 @@ A plan file and a task number, or a self-contained description of one change.
 - If the task is wrong or cannot work as written, make the smallest change that meets its intent and say so in your report. If that would alter a name, type or file another task relies on, stop and report instead.
 - If you are blocked after two real attempts, stop and report what you tried and what you saw.
 - Commit only if the task says to, and only the files you changed.
+- If your task is in a plan file, tick each step's box in the file at the path you were given as soon as the step is done and before the next one: one edit per box, your own task's boxes only. Do not commit the plan file. If that edit is refused, tick no copy of the file: say in your report which steps you finished.
 
 ## Do not
 
