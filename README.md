@@ -70,11 +70,11 @@ above the prompt has a `panel` button that does both.
 Where it appears depends on where you run Claude Code:
 
 - **Desktop app:** beside the conversation.
-- **Terminal, fullscreen layout:** at the side, in a window at least 110
-  columns wide. Click in it to use it.
-- **Terminal, classic layout** (the default): in a box above the prompt,
-  which takes the keyboard until you close it. Typing `/tui fullscreen`
-  switches the terminal to the layout that puts it at the side.
+- **Terminal:** at the side when the window is wide enough, otherwise in
+  a box above the prompt. Widening the window, or typing
+  `/tui fullscreen`, puts it at the side.
+
+The settings take the keyboard while they are open.
 
 Inside the panel, click, or move with Tab and the arrow keys and press
 Enter. No single key does anything by itself, so typing by mistake while
@@ -189,18 +189,21 @@ project's instructions or you say so.
   | Mark | Meaning |
   | -- | -- |
   | `·` | waiting |
-  | `▶` | running: an agent is working on it |
+  | `▶` | running: an agent is working on it, or Claude has ticked some of its boxes itself in this session |
   | `✓` | done: every box is ticked |
   | `!` | to check: the agent said it finished, and boxes are still open |
   | `✗` | stopped: the agent failed or was stopped |
 
-- **The times** count only while the task's agent is running.
+- **The times** count while the task's agent is running, and leave out
+  any time the agent was stopped. A task Claude works itself is timed
+  from its first tick to its last.
 - **The estimates** are only for a task an agent is working on. An
   estimate is that agent's pace so far, times the steps left. It is
   written with `~` and counts down. When the time runs out, the view
   reads `longer than estimated`. `no estimate yet` means there is no
-  pace to go on yet: the agent has ticked no step, and no task of the
-  plan has been finished by an agent.
+  pace to go on yet: the agent has ticked too few steps (one is enough,
+  or two when its first tick is what showed Tune which task it is on),
+  and no task of the plan has been finished by an agent.
 - **An agent in its own worktree** has no estimate, and its bar does not
   move. Its row shows the time taken only. Claude ticks that task's
   boxes from the agent's report.
@@ -211,7 +214,8 @@ The view opens only when you ask. Type `/tune progress`, press the
 The view appears where the panel does (see The panel).
 
 The progress view does not take the keyboard: you can keep typing while
-it is open. Esc does not close it. Close it with `/tune close`, its
+it is open. Esc does not close it, and while Claude is working Esc stops
+Claude, as it always does. Close the view with `/tune close`, its
 `close` button, or the row's `progress` button.
 
 `/tune status` prints the same counts as text, for you alone: the text
