@@ -226,3 +226,172 @@ export function left(state: Progress, key: string, now: number): Left {
 export function isRunning(state: Progress): boolean {
   return state.agents.some(agent => agent.endedAt === null)
 }
+
+// What a person reads: rows, bars, times and the laid-out lines of the panel and the status.
+// Widths are counted in string length, as the row in register.tsx counts them.
+export type Row = {
+  mark: '·' | '▶' | '✓' | '!' | '✗'
+  state: TaskState
+  label: string
+  done: number
+  total: number
+  elapsed: string
+  left: string
+  who: string
+}
+export type Shown = {
+  plan: string | null
+  unread: boolean
+  tracker: string | null
+  tasksDone: number
+  tasksTotal: number
+  stepsDone: number
+  stepsTotal: number
+  rows: Row[]
+  others: { who: string; elapsed: string }[]
+}
+
+const MARKS: Record<TaskState, Row['mark']> = { waiting: '·', running: '▶', done: '✓', 'to check': '!', stopped: '✗' }
+const GAP = '   '
+const INDENT = '     '
+const UNREAD = 'The plan file could not be read; these are the last counts.'
+const NO_PLAN = 'No plan is tracked.'
+const MINUTE = 60000
+const HOUR = 3600000
+
+const clip = (text: string, room: number): string =>
+  text.length <= room ? text : `${text.slice(0, Math.max(1, room - 1))}…`
+const two = (value: number): string => String(value).padStart(2, '0')
+
+export function clock(ms: number): string {
+  const time = Math.max(0, Math.floor(ms))
+  if (time < HOUR) return `${Math.floor(time / MINUTE)}m${two(Math.floor((time % MINUTE) / 1000))}s`
+  return `${Math.floor(time / HOUR)}h${two(Math.floor((time % HOUR) / MINUTE))}m`
+}
+
+export function bar(done: number, total: number, width: number): string {
+  if (width <= 0) return ''
+  const share = total > 0 ? Math.round((done / total) * width) : 0
+  const full = done >= total && total > 0 ? width : Math.min(Math.max(share, done > 0 ? 1 : 0), width - 1)
+  return '█'.repeat(full) + '░'.repeat(width - full)
+}
+
+function leftText(figure: Left): string {
+  if (figure.kind === 'none') return ''
+  if (figure.kind === 'unknown') return 'no estimate yet'
+  if (figure.kind === 'over') return 'longer than estimated'
+  const seconds = Math.ceil(figure.ms / 5000) * 5
+  if (seconds < 60) return `~${seconds}s left`
+  const minutes = Math.max(1, Math.round(figure.ms / MINUTE))
+  if (minutes < 60) return `~${minutes}m left`
+  return `~${Math.floor(minutes / 60)}h${two(minutes % 60)}m left`
+}
+
+const whoOf = (run: AgentRun, levels: Record<string, string>): string => {
+  const level = has(levels, run.id) ? levels[run.id] : undefined
+  const type = run.type.replace(/^tune:/, '')
+  return level ? `${type} ${level}` : type
+}
+
+function trackerText(tracker: Tracker, now: number): string {
+  const counts = tracker.done !== null && tracker.total !== null ? `${tracker.done} of ${tracker.total}` : ''
+  const age = now - tracker.at
+  const read = age < MINUTE ? 'read just now' : age < HOUR ? `read ${Math.floor(age / MINUTE)}m ago` : `read ${Math.floor(age / HOUR)}h ago`
+  return [tracker.id, tracker.state, tracker.title, counts, read].filter(part => part !== '').join(' · ')
+}
+
+export function shown(state: Progress, now: number, levels: Record<string, string> = {}): Shown {
+  const rows = state.tasks.map((task): Row => {
+    const status = stateOf(state, task.key)
+    const time = elapsed(state, task.key, now)
+    const run = runOf(state, markOf(state.marks, task.key)?.agent ?? null)
+    return {
+      mark: MARKS[status],
+      state: status,
+      label: task.number === null ? task.name : `${task.number} ${task.title}`,
+      done: ticked(task),
+      total: task.steps.length,
+      elapsed: time === null ? '' : clock(time),
+      left: leftText(left(state, task.key, now)),
+      who: run && run.endedAt === null ? whoOf(run, levels) : '',
+    }
+  })
+  const onTask = new Set(state.tasks.map(task => markOf(state.marks, task.key)?.agent ?? null))
+  const others = state.agents
+    .filter(run => run.endedAt === null && !onTask.has(run.id))
+    .map(run => ({ who: whoOf(run, levels), elapsed: clock(now - run.startedAt) }))
+  return {
+    plan: state.plan === null ? null : state.label,
+    unread: state.unread,
+    tracker: state.tracker ? trackerText(state.tracker, now) : null,
+    tasksDone: rows.filter(row => row.state === 'done').length,
+    tasksTotal: rows.length,
+    stepsDone: rows.reduce((sum, row) => sum + row.done, 0),
+    stepsTotal: rows.reduce((sum, row) => sum + row.total, 0),
+    rows,
+    others,
+  }
+}
+
+/** Cells in columns: each column as wide as its widest cell, the first cut to fit `width`. */
+function table(cells: string[][], width: number, lead: string[]): string[] {
+  const columns = Math.max(0, ...cells.map(row => row.length))
+  const widths = Array.from({ length: columns }, (_, index) => Math.max(0, ...cells.map(row => (row[index] ?? '').length)))
+  const rest = widths.slice(1).reduce((sum, each) => sum + GAP.length + each, 0)
+  const room = Math.max(1, Math.min(widths[0] ?? 0, width - rest - Math.max(0, ...lead.map(each => each.length))))
+  return cells.map((row, index) => {
+    const first = clip(row[0] ?? '', room).padEnd(room)
+    const tail = row.slice(1).map((cell, column) => cell.padEnd(widths[column + 1] ?? 0))
+    return clip(`${lead[index] ?? ''}${[first, ...tail].join(GAP)}`.trimEnd(), width)
+  })
+}
+
+function agentLines(others: Shown['others'], width: number): string[] {
+  return table(others.map(other => [other.who, other.elapsed]), width, [])
+}
+
+export function lines(view: Shown, width: number): string[] {
+  if (view.plan === null) {
+    return view.others.length === 0 ? [NO_PLAN] : [NO_PLAN, '', 'Agents', ...agentLines(view.others, width)]
+  }
+  const out: string[] = []
+  if (view.tracker !== null) out.push(clip(view.tracker, width))
+  out.push(clip(`plan: ${view.plan}`, width))
+  if (view.unread) out.push(clip(UNREAD, width))
+  const all = `All tasks${GAP}${bar(view.stepsDone, view.stepsTotal, 14)}`
+  const counts = `${view.tasksDone} of ${view.tasksTotal} done · ${view.stepsDone} of ${view.stepsTotal} steps`
+  if (width < 60) out.push(clip(all, width), clip(counts, width))
+  else out.push(clip(`${all}${GAP}${counts}`, width))
+  out.push('')
+
+  const bars = width >= 60
+  const below = width < 44
+  const showsBar = (row: Row): boolean => row.state === 'running' || row.state === 'to check' || row.state === 'stopped'
+  const cells = view.rows.map(row => [
+    row.label,
+    ...(bars ? [showsBar(row) ? bar(row.done, row.total, 7) : ''] : []),
+    `${row.done}/${row.total}`,
+    row.elapsed,
+    ...(below ? [] : [row.left]),
+  ])
+  const taskLines = table(cells, width, view.rows.map(row => `${row.mark} `))
+  view.rows.forEach((row, index) => {
+    out.push(taskLines[index] ?? '')
+    if (below && row.left !== '') out.push(clip(`${INDENT}${row.left}`, width))
+    if (row.who !== '') out.push(clip(`${INDENT}${row.who}`, width))
+  })
+  if (view.others.length > 0) out.push('', 'Other agents', ...agentLines(view.others, width))
+  return out
+}
+
+export function summary(view: Shown): string {
+  if (view.plan === null) return NO_PLAN
+  const said = `Tracking ${view.plan}: ${view.tasksDone} of ${view.tasksTotal} tasks done, ${view.stepsDone} of ${view.stepsTotal} steps.`
+  return view.unread ? `${said} ${UNREAD}` : said
+}
+
+export function count(state: Progress): string | null {
+  if (state.plan === null) return null
+  const done = state.tasks.filter(task => stateOf(state, task.key) === 'done').length
+  return `${done}/${state.tasks.length} tasks`
+}

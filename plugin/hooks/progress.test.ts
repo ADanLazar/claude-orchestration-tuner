@@ -5,14 +5,20 @@ import type { Task } from './plan'
 import {
   agentEnded,
   agentStarted,
+  bar,
   clear,
+  clock,
+  count,
   elapsed,
   isRunning,
   left,
+  lines,
   NOTHING,
   observe,
   setTracker,
+  shown,
   stateOf,
+  summary,
   track,
   unreadable,
 } from './progress'
@@ -384,4 +390,119 @@ test('no estimate where no agent is at work', () => {
   const away = observe(apart, plan('x   '), null, 10000)
   expect(away.marks[K1]!.agent).toBe('a1')
   expect(left(away, K1, 10000)).toEqual({ kind: 'none' })
+})
+
+// The view's fixture: Task 1 done by a1, Task 2 under way by a2, a reviewer on no task.
+const NOW = 166000
+const LEVELS = { a2: 'sonnet / medium', a3: 'opus / medium' }
+const reviewer = (id: string) => ({ id, type: 'tune:code-reviewer', prompt: 'Review the diff', apart: false })
+const SCENE = ((): Progress => {
+  let state = track(NOTHING, PATH, PATH, tasks('   ', '    ', '  '))
+  state = setTracker(state, { id: 'PROJ-12', title: 'Export to CSV', state: 'In Progress' }, NOW - 12 * 60000)
+  state = agentStarted(state, executor('a1', 'Do Task 1 of the plan'), 0)
+  state = observe(state, tasks('x  ', '    ', '  '), { agent: 'a1', task: 0 }, 40000)
+  state = observe(state, tasks('xx ', '    ', '  '), { agent: 'a1', task: 0 }, 80000)
+  state = observe(state, tasks('xxx', '    ', '  '), { agent: 'a1', task: 0 }, 130000)
+  state = agentEnded(state, 'a1', 'completed', 130000)
+  state = agentStarted(state, executor('a2', 'Do Task 2 of the plan'), 130000)
+  state = agentStarted(state, reviewer('a3'), 131000)
+  state = observe(state, tasks('xxx', 'x   ', '  '), { agent: 'a2', task: 1 }, 148000)
+  return observe(state, tasks('xxx', 'xx  ', '  '), { agent: 'a2', task: 1 }, 166000)
+})()
+const isTaskLine = (line: string): boolean => /^[·▶✓!✗] /.test(line)
+
+test('clock and bar read as a person says them', () => {
+  expect(clock(48000)).toBe('0m48s')
+  expect(clock(130000)).toBe('2m10s')
+  expect(clock(3900000)).toBe('1h05m')
+  expect(bar(4, 7, 7)).toBe('████░░░')
+  expect(bar(0, 5, 7)).toBe('░░░░░░░')
+  expect(bar(5, 5, 7)).toBe('███████')
+  expect(bar(1, 41, 14).split('█').length - 1).toBe(1)
+  expect(bar(40, 41, 14).split('█').length - 1).toBe(13)
+})
+
+test('shown counts tasks and steps and marks each task', () => {
+  const view = shown(SCENE, NOW, LEVELS)
+  expect([view.tasksDone, view.tasksTotal, view.stepsDone, view.stepsTotal]).toEqual([1, 3, 5, 9])
+  expect(view.rows.map(row => row.mark)).toEqual(['✓', '▶', '·'])
+  expect(view.rows.map(({ label, done, total, elapsed, left, who }) => ({ label, done, total, elapsed, left, who }))).toEqual([
+    { label: '1 Read the file', done: 3, total: 3, elapsed: '2m10s', left: '', who: '' },
+    { label: '2 Write the rows', done: 2, total: 4, elapsed: '0m36s', left: '~40s left', who: 'executor sonnet / medium' },
+    { label: '3 Tests', done: 0, total: 2, elapsed: '', left: '', who: '' },
+  ])
+  expect(view.others).toEqual([{ who: 'code-reviewer opus / medium', elapsed: '0m35s' }])
+  expect(view.tracker).toBe('PROJ-12 · In Progress · Export to CSV · read 12m ago')
+  expect(view.plan).toBe(PATH)
+})
+
+test('the estimate and the tracker\'s age in words', () => {
+  const leftAt = (state: Progress, now: number): string => shown(state, now).rows[1]!.left
+  const linked = agentStarted(tracked(), executor('a2', 'Do Task 2'), 0)
+  const shortOne = observe(linked, tasks('   ', 'x   ', '  '), { agent: 'a2', task: 1 }, 20000)
+  expect(leftAt(shortOne, 28000)).toBe('~55s left')
+  const longOne = observe(linked, tasks('   ', 'x   ', '  '), { agent: 'a2', task: 1 }, 80000)
+  expect(leftAt(longOne, 80000)).toBe('~4m left')
+  expect(leftAt(linked, 1000)).toBe('no estimate yet')
+  expect(leftAt(shortOne, 90000)).toBe('longer than estimated')
+
+  expect(shown(setTracker(SCENE, ITEM, NOW - 20000), NOW).tracker).toMatch(/ · read just now$/)
+  expect(shown(setTracker(SCENE, ITEM, NOW - 2 * 3600000), NOW).tracker).toMatch(/ · read 2h ago$/)
+  expect(shown(setTracker(SCENE, ITEM, NOW), NOW).tracker).toContain('· 4 of 9 ·')
+})
+
+test('lines lays the view out', () => {
+  const out = lines(shown(SCENE, NOW, LEVELS), 80)
+  const wanted = [
+    /^PROJ-12 · In Progress · Export to CSV · read 12m ago$/,
+    /^plan: docs\/plans\/export\.md$/,
+    /^All tasks\s+████████░░░░░░\s+1 of 3 done · 5 of 9 steps$/,
+    /^✓ 1 Read the file\s+3\/3\s+2m10s$/,
+    /^▶ 2 Write the rows\s+████░░░\s+2\/4\s+0m36s\s+~40s left$/,
+    /^ {5}executor sonnet \/ medium$/,
+    /^· 3 Tests\s+0\/2$/,
+    /^Other agents$/,
+    /^code-reviewer opus \/ medium\s+0m35s$/,
+  ]
+  let at = 0
+  for (const pattern of wanted) {
+    const found = out.findIndex((line, index) => index >= at && pattern.test(line))
+    expect(found).toBeGreaterThanOrEqual(at)
+    at = found + 1
+  }
+})
+
+test('no line is wider than the pane', () => {
+  const long = setTracker(
+    track(SCENE, PATH, PATH, SCENE.tasks.map((task, index) => (index === 0 ? { ...task, title: 'Read '.repeat(30) } : task))),
+    { ...ITEM, title: 'Export '.repeat(20) },
+    NOW,
+  )
+  for (const state of [SCENE, long]) {
+    for (const width of [30, 48, 80]) {
+      const out = lines(shown(state, NOW, LEVELS), width)
+      for (const line of out) expect(line.length).toBeLessThanOrEqual(width)
+      if (width === 48) expect(out.filter(isTaskLine).some(line => line.includes('█'))).toBe(false)
+      expect(out.join('\n')).toContain('1 of 3 done')
+      expect(out.join('\n')).toContain('2/4')
+    }
+  }
+})
+
+test('with no plan it says so and lists the running agents', () => {
+  expect(lines(shown(NOTHING, NOW), 80)).toEqual(['No plan is tracked.'])
+  const out = lines(shown(agentStarted(NOTHING, reviewer('a3'), 131000), NOW, LEVELS), 80)
+  expect(out).toContain('Agents')
+  expect(out.join('\n')).toContain('code-reviewer opus / medium')
+})
+
+test('an unreadable plan is said', () => {
+  expect(lines(shown(unreadable(SCENE), NOW), 80)).toContain('The plan file could not be read; these are the last counts.')
+})
+
+test('summary and count', () => {
+  expect(summary(shown(SCENE, NOW))).toBe('Tracking docs/plans/export.md: 1 of 3 tasks done, 5 of 9 steps.')
+  expect(summary(shown(NOTHING, NOW))).toBe('No plan is tracked.')
+  expect(count(SCENE)).toBe('1/3 tasks')
+  expect(count(NOTHING)).toBe(null)
 })
