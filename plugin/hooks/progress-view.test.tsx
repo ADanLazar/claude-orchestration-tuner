@@ -167,6 +167,84 @@ test('on a narrow pane no line is cut', async ($, on) => {
   await ui.unmount()
 })
 
+const ON_TASK_1 = 'Do Task 1 of the plan at /work/docs/plans/export.md'
+const spawn = ($: any): Promise<any> =>
+  $.agent.spawn({ prompt: ON_TASK_1, subagentType: 'tune:executor', description: 'work' } as any)
+const report = ($: any, agentId: string): Promise<any> =>
+  $.agent.report({ agentId, subagentType: 'tune:executor', status: 'completed', text: 'done', provider: { plugin: 'tune', tier: 'user' } } as any)
+
+/** The plan tracked and an executor on Task 1, with the clock at 0. */
+async function running($: any, on: any): Promise<{ clock: any; world: any }> {
+  const clock = mock.clock(on, { now: 0 })
+  const world = makeIo()
+  world.files[PLAN_PATH] = PLAN_TEXT
+  fake(on, world)
+  await $.session.start(START)
+  await $.tool.call({ tool: 'mcp__tune__progress', plan: 'docs/plans/export.md' } as any)
+  await spawn($)
+
+  return { clock, world }
+}
+
+/** Whether the pane's list is still asked for: no rise over five more seconds once a period has passed. */
+async function stopped(clock: any, world: any): Promise<boolean> {
+  await clock.advance(1000)
+  const checks = world.paneChecks
+  await clock.advance(5000)
+
+  return world.paneChecks === checks
+}
+
+test('the open progress view counts on while an agent runs', async ($, on) => {
+  const { clock } = await running($, on)
+  await tune($, 'progress')
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 80 }, surface: 'terminal' })
+  expect(await words(ui)).toContain('0m00s')
+
+  await clock.advance(3000)
+  expect(await words(ui)).toContain('0m03s')
+  await ui.unmount()
+})
+
+test('it stops when the view is closed', async ($, on) => {
+  const { clock, world } = await running($, on)
+  await tune($, 'progress')
+  await tune($, 'close')
+
+  expect(await stopped(clock, world)).toBe(true)
+})
+
+test('it stops when the agent has reported', async ($, on) => {
+  const { clock, world } = await running($, on)
+  await tune($, 'progress')
+  await report($, 'a1')
+
+  expect(await stopped(clock, world)).toBe(true)
+})
+
+test('it does not run for the settings view', async ($, on) => {
+  const { clock, world } = await running($, on)
+  await tune($, '')
+
+  expect(await stopped(clock, world)).toBe(true)
+})
+
+test('it starts again when a second agent starts with the view still open', async ($, on) => {
+  const { clock, world } = await running($, on)
+  await tune($, 'progress')
+  await report($, 'a1')
+  expect(await stopped(clock, world)).toBe(true)
+
+  await spawn($)
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 80 }, surface: 'terminal' })
+  const before = await words(ui)
+  const checks = world.paneChecks
+  await clock.advance(3000)
+  expect(world.paneChecks > checks).toBe(true)
+  expect(await words(ui)).not.toBe(before)
+  await ui.unmount()
+})
+
 test('it draws without a profile', async ($, on) => {
   const world = makeIo()
   world.failRead.add('/plugins/tune/profiles/build.json')

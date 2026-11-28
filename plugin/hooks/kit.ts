@@ -94,6 +94,8 @@ export type FakeIo = {
   openArgs: Record<string, any>[]
   /** The id of every pane the mod asked to close. */
   closed: string[]
+  /** How many times the mod asked which panes are up. */
+  paneChecks: number
   /** How many model requests reached the stand-in model. */
   requests: number
   /** What `$.session.cwd()` answers. */
@@ -142,6 +144,7 @@ export function makeIo(seed: Record<string, unknown> = {}): FakeIo {
     opened: [],
     openArgs: [],
     closed: [],
+    paneChecks: 0,
     requests: 0,
     cwd: '/work',
     tools: [],
@@ -258,9 +261,11 @@ export function fake(on: any, world: FakeIo): void {
 
     return { value: undefined }
   })
-  on('ui.panes', () => ({
-    value: [...up].map(id => ({ id, title: 'Tune', isShown: true, isFocused: true, isPlaced: true })),
-  }))
+  on('ui.panes', () => {
+    world.paneChecks += 1
+
+    return { value: [...up].map(id => ({ id, title: 'Tune', isShown: true, isFocused: true, isPlaced: true })) }
+  })
   on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
   on('session.end', (_: unknown, e: any) => ({ sessionId: e.sessionId }))
   on('agent.list', () => ({ value: world.agents }))

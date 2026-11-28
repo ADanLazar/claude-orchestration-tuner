@@ -110,6 +110,8 @@ declare module 'claude-code' {
       progress: Shaped<Progress>
       /** Which view the panel shows. */
       pane: 'settings' | 'progress'
+      /** Raised each second while the progress view is open and an agent runs, so its times are drawn again. */
+      beat: number
     }
   }
 }

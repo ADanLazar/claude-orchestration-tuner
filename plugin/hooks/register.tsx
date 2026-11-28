@@ -50,6 +50,8 @@ const confirm = atom({ plugin: 'tune', key: 'confirm' } as const, null as string
 const progress = atom({ plugin: 'tune', key: 'progress' } as const, NOTHING, { shape: 'progress-1' })
 // Which view the panel shows.
 const pane = atom({ plugin: 'tune', key: 'pane' } as const, 'settings' as 'settings' | 'progress')
+// Raised each beat, so the open progress view draws its times again.
+const beat = atom({ plugin: 'tune', key: 'beat' } as const, 0)
 
 const TOOL = 'mcp__tune__progress'
 const TOOL_TEXT =
@@ -489,6 +491,47 @@ function startPoll($: any): void {
   }
 }
 
+// While the progress view is open and an agent runs, the view draws again this often.
+const BEAT_MS = 1000
+// The one redraw timer: going only while the open progress view has something to count.
+let beating: { cancel: () => void } | null = null
+
+function stopBeat(): void {
+  const timer = beating
+  beating = null
+  try {
+    timer?.cancel()
+  } catch {
+    // A timer that cannot be stopped ends with its session.
+  }
+}
+
+/** Starts the redraw timer if none is going. Each period it stops itself when there is nothing to count. */
+function ensureBeat($: any): void {
+  if (beating !== null) {
+    return
+  }
+  beating = $.clock.every(BEAT_MS, async () => {
+    try {
+      if ((await isPaneOpen($)) && (await read($, pane)) === 'progress' && isRunning(await read($, progress))) {
+        await update($, beat, n => (n ?? 0) + 1)
+
+        return
+      }
+    } catch {
+      // Nothing to draw: the timer stops, and the next opening or agent starts it again.
+    }
+    stopBeat()
+  })
+}
+
+/** Starts the redraw timer when an agent runs; with none, no timer is started. */
+async function beatIfRunning($: any): Promise<void> {
+  if (isRunning(await read($, progress))) {
+    ensureBeat($)
+  }
+}
+
 /** Tracks the first .md file inside the project that an agent's prompt names and that holds a task; of the first five. */
 async function trackFromPrompt($: any, prompt: string): Promise<void> {
   const cwd = String(await $.session.cwd())
@@ -612,6 +655,7 @@ export const register: Register = on => {
     const started = await next(e)
     told.clear()
     stopPoll()
+    stopBeat()
     try {
       await $.command.register({
         name: 'tune',
@@ -649,6 +693,7 @@ export const register: Register = on => {
     const ended = await next(e)
     try {
       stopPoll()
+      stopBeat()
       await update($, progress, () => NOTHING)
     } catch {
       // A session ends whatever happens to Tune.
@@ -746,6 +791,7 @@ export const register: Register = on => {
         const at = await $.clock.now()
         await update($, progress, now => agentStarted(now, { id, type: e.subagentType, prompt: e.prompt, apart }, at))
         startPoll($)
+        ensureBeat($)
       }
     } catch {
       // Never stand between an agent and its start.
@@ -785,6 +831,7 @@ export const register: Register = on => {
       }
       if (words.length === 1 && words[0] === 'progress') {
         await openPane($, 'progress')
+        await beatIfRunning($)
 
         return { text: progressOpenedText(e.presentation) }
       }
@@ -878,6 +925,7 @@ export const register: Register = on => {
     )
     const closeButton = <Button key="close" label="close" role="dismiss" onPress={() => closePane($)} />
     if ((await read($, pane)) === 'progress') {
+      await read($, beat)
       // With nothing tracked and no agent known, neither the clock nor the list is asked.
       const drawn =
         state.plan === null && state.agents.length === 0
@@ -977,7 +1025,14 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         <Box>
-          <Button key="view:progress" label="progress" onPress={() => update($, pane, () => 'progress' as const)} />
+          <Button
+            key="view:progress"
+            label="progress"
+            onPress={async () => {
+              await update($, pane, () => 'progress' as const)
+              await beatIfRunning($)
+            }}
+          />
           {closeButton}
           <Text dimColor>
             {' '}
