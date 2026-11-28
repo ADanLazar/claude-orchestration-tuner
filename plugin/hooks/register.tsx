@@ -14,6 +14,7 @@ import {
   agentEnded,
   agentStarted,
   clear,
+  count,
   isRunning,
   lines,
   NOTHING,
@@ -47,6 +48,8 @@ const why = atom({ plugin: 'tune', key: 'why' } as const, false)
 // The profile a delete is waiting to have confirmed by a second press.
 const confirm = atom({ plugin: 'tune', key: 'confirm' } as const, null as string | null)
 const progress = atom({ plugin: 'tune', key: 'progress' } as const, NOTHING, { shape: 'progress-1' })
+// Which view the panel shows.
+const pane = atom({ plugin: 'tune', key: 'pane' } as const, 'settings' as 'settings' | 'progress')
 
 const TOOL = 'mcp__tune__progress'
 const TOOL_TEXT =
@@ -119,7 +122,7 @@ function inForce(now: View): Profile | null {
 }
 
 /** One line of at most `room` characters: what does not fit is dropped in steps, then cut. */
-export function rowText(now: View, mine: Level | null, room: number): string {
+export function rowText(now: View, mine: Level | null, room: number, _tasks?: string | null): string {
   const profile = inForce(now)
   if (profile === null) {
     return clip('tune: not loaded', room)
@@ -532,10 +535,20 @@ async function elsewhere($: any, id: string): Promise<boolean> {
   }
 }
 
-/** Opens the panel as a person first sees it: nothing is waiting to be confirmed. */
-async function openPane($: any): Promise<void> {
+/**
+ * Opens the panel on one view, as a person first sees it: nothing is waiting to be confirmed.
+ * The settings take the keyboard; the progress view, which is watched, leaves it with the prompt.
+ * A second open does not take the keyboard back, so a pane open on the other view is opened again.
+ */
+async function openPane($: any, which: 'settings' | 'progress' = 'settings'): Promise<void> {
   await update($, confirm, () => null)
-  await $.ui.open({ id: PANE, title: 'Tune', focus: true, closeOnEscape: true, columns: 50, rows: INLINE_ROWS })
+  if ((await read($, pane)) !== which && (await isPaneOpen($))) {
+    await $.ui.close({ id: PANE })
+  }
+  await update($, pane, () => which)
+  // The engine takes `focus` as true or left out; false is refused.
+  const focus = which === 'settings' ? { focus: true } : {}
+  await $.ui.open({ id: PANE, title: 'Tune', ...focus, closeOnEscape: true, columns: 50, rows: INLINE_ROWS })
 }
 
 /** Closes the panel. A delete nobody confirmed is forgotten with it. */
@@ -563,6 +576,19 @@ function openedText(presentation: { isFullscreen?: boolean } | undefined): strin
   }
 
   return `The Tune panel is open. ${close}`
+}
+
+/** What /tune progress answers: where the view is, and how to close it without the keyboard. */
+function progressOpenedText(presentation: { isFullscreen?: boolean } | undefined): string {
+  const close = "It does not take the keyboard: close it with /tune close, its close button, or the row's progress button."
+  if (presentation?.isFullscreen === true) {
+    return `The Tune progress view is open at the side. ${close}`
+  }
+  if (presentation?.isFullscreen === false) {
+    return `The Tune progress view is open above the prompt. ${close}`
+  }
+
+  return `The Tune progress view is open. ${close}`
 }
 
 /**
@@ -757,6 +783,11 @@ export const register: Register = on => {
 
         return { text: openedText(e.presentation) }
       }
+      if (words.length === 1 && words[0] === 'progress') {
+        await openPane($, 'progress')
+
+        return { text: progressOpenedText(e.presentation) }
+      }
       if (words.length === 1 && words[0] === 'close') {
         await closePane($)
 
@@ -838,8 +869,34 @@ export const register: Register = on => {
     const { Box, Button, Input, Select, Text } = $.ui.resolve(e)
     const now = await read($, view)
     const mine = await read($, main)
+    const state = await read($, progress)
     if (e.props.placement === 'widget') {
-      return <Text dimColor>{rowText(now, mine, e.props.bodyColumns)}</Text>
+      return <Text dimColor>{rowText(now, mine, e.props.bodyColumns, count(state))}</Text>
+    }
+    const hint = e.surface === 'terminal' && e.props.placement === 'inline' && (
+      <Text dimColor>Shown above the prompt. For a panel at the side, type /tui fullscreen.</Text>
+    )
+    const closeButton = <Button key="close" label="close" role="dismiss" onPress={() => closePane($)} />
+    if ((await read($, pane)) === 'progress') {
+      // With nothing tracked and no agent known, neither the clock nor the list is asked.
+      const drawn =
+        state.plan === null && state.agents.length === 0
+          ? ['No plan is tracked.']
+          : lines(shown(state, await $.clock.now(), await levelsOf($)), e.props.bodyColumns)
+
+      return (
+        <Box flexDirection="column">
+          <Box>
+            <Button key="view:settings" label="settings" onPress={() => update($, pane, () => 'settings' as const)} />
+            {closeButton}
+            <Text dimColor> Tune · progress</Text>
+          </Box>
+          {hint}
+          {drawn.map(line => (
+            <Text>{line}</Text>
+          ))}
+        </Box>
+      )
     }
     const said = await read($, message)
     const showWhy = await read($, why)
@@ -848,7 +905,7 @@ export const register: Register = on => {
 
     const world = now.world
     const profile = inForce(now)
-    const lines = (text: string | null) => (text === null ? [] : text.split('\n')).map(line => <Text dimColor>{line}</Text>)
+    const paragraphs = (text: string | null) => (text === null ? [] : text.split('\n')).map(line => <Text dimColor>{line}</Text>)
     const command = (
       <Input
         key="command"
@@ -920,15 +977,14 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         <Box>
-          <Button key="close" label="close" role="dismiss" onPress={() => closePane($)} />
+          <Button key="view:progress" label="progress" onPress={() => update($, pane, () => 'progress' as const)} />
+          {closeButton}
           <Text dimColor>
             {' '}
             Tune · {name} · in force on this machine{what === 'changed' ? ' · changed from the shipped profile' : ''}
           </Text>
         </Box>
-        {e.surface === 'terminal' && e.props.placement === 'inline' && (
-          <Text dimColor>Shown above the prompt. For a panel at the side, type /tui fullscreen.</Text>
-        )}
+        {hint}
         {world.note !== null && <Text dimColor>{world.note}</Text>}
         {world.storeError !== null && <Text dimColor>{world.storeError}</Text>}
         <Box>
@@ -1135,7 +1191,7 @@ export const register: Register = on => {
         {reasons !== null && reasons.caveats.map(caveat => <Text dimColor>{caveat}</Text>)}
         {reasons !== null && reasons.sources.map(source => <Text dimColor>  {source}</Text>)}
         {command}
-        {lines(said)}
+        {paragraphs(said)}
       </Box>
     )
   })

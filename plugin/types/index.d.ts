@@ -108,6 +108,8 @@ declare module 'claude-code' {
       confirm: string | null
       /** The tracked plan's progress, for this session only. */
       progress: Shaped<Progress>
+      /** Which view the panel shows. */
+      pane: 'settings' | 'progress'
     }
   }
 }

@@ -197,3 +197,7 @@ test('HELP names track', () => {
   expect(HELP).toContain('track <path>')
   expect(HELP).toContain('track off')
 })
+
+test('HELP names progress', () => {
+  expect(HELP).toContain('progress  ')
+})
