@@ -37,16 +37,19 @@ const runOf = (state: Progress, id: string | null): AgentRun | undefined =>
 
 /** Marks keyed by the tasks still in the file; a key that is gone is dropped. */
 const kept = (marks: Record<string, Mark>, tasks: Task[]): Record<string, Mark> =>
-  Object.fromEntries(tasks.flatMap(task => (marks[task.key] ? [[task.key, marks[task.key]]] : [])))
+  Object.fromEntries(
+    tasks.flatMap((task): [string, Mark][] => {
+      const mark = marks[task.key]
+      return mark ? [[task.key, mark]] : []
+    }),
+  )
 
 /** Agent `id` on the task `key`, and off any other. */
 function link(marks: Record<string, Mark>, id: string, key: string, now: number): Record<string, Mark> {
   const out: Record<string, Mark> = {}
   for (const [other, mark] of Object.entries(marks)) {
-    out[other] =
-      other !== key && mark.agent === id
-        ? { ...mark, agent: null, stoppedAt: mark.ticks.length > 0 ? mark.ticks[mark.ticks.length - 1].at : mark.startedAt }
-        : mark
+    const last = mark.ticks[mark.ticks.length - 1]
+    out[other] = other !== key && mark.agent === id ? { ...mark, agent: null, stoppedAt: last ? last.at : mark.startedAt } : mark
   }
   if (out[key]?.agent !== id) out[key] = { agent: id, startedAt: now, stoppedAt: null, ticks: [] }
   return out
@@ -54,6 +57,10 @@ function link(marks: Record<string, Mark>, id: string, key: string, now: number)
 
 const running = (agents: AgentRun[], id: string): AgentRun[] =>
   agents.map(agent => (agent.id === id ? { ...agent, endedAt: null, ended: null } : agent))
+
+/** An ended agent that runs again: the clock of the task it is on runs again too. */
+const resumed = (marks: Record<string, Mark>, id: string): Record<string, Mark> =>
+  Object.fromEntries(Object.entries(marks).map(([key, mark]) => [key, mark.agent === id ? { ...mark, stoppedAt: null } : mark]))
 
 export function track(state: Progress, plan: string, label: string, tasks: Task[]): Progress {
   const marks = plan === state.plan ? kept(state.marks, tasks) : {}
@@ -92,11 +99,14 @@ export function agentStarted(
   agent: { id: string; type: string; prompt: string; apart: boolean },
   now: number,
 ): Progress {
-  const agents = runOf(state, agent.id)
+  const known = runOf(state, agent.id)
+  const agents = known
     ? running(state.agents, agent.id)
     : [...state.agents, { id: agent.id, type: agent.type, apart: agent.apart, startedAt: now, endedAt: null, ended: null }]
+  const before = known && known.endedAt !== null ? resumed(state.marks, agent.id) : state.marks
   const index = isTicker(agent.type) ? linkByPrompt(state.tasks, agent.prompt) : null
-  const marks = index === null ? state.marks : link(state.marks, agent.id, state.tasks[index].key, now)
+  const task = index === null ? undefined : state.tasks[index]
+  const marks = task ? link(before, agent.id, task.key, now) : before
   return { ...state, agents, marks }
 }
 
@@ -118,7 +128,7 @@ export function observe(
   const before: Record<string, number> = {}
   for (const task of state.tasks) before[task.key] = ticked(task)
   // A key that is new has no earlier count, so nothing in it counts as a rise.
-  const rise = tasks.map(task => (task.key in before ? Math.max(ticked(task) - before[task.key], 0) : 0))
+  const rise = tasks.map(task => (task.key in before ? Math.max(ticked(task) - (before[task.key] ?? 0), 0) : 0))
   let marks = kept(state.marks, tasks)
   let agents = state.agents
   const add = (key: string, kind: Tick['kind'], count: number): void => {
@@ -134,20 +144,24 @@ export function observe(
   const run = by && by.agent !== null ? runOf(state, by.agent) : undefined
   if (by && run && isTicker(run.type)) {
     agents = running(agents, run.id)
+    if (run.endedAt !== null) marks = resumed(marks, run.id)
     const index = by.task ?? rise.findIndex(count => count > 0)
-    if (index >= 0 && index < tasks.length) {
+    const task = tasks[index]
+    if (index >= 0 && task) {
       own = index
-      marks = link(marks, run.id, tasks[index].key, now)
-      if (rise[index] > 0) add(tasks[index].key, 'agent', rise[index])
+      marks = link(marks, run.id, task.key, now)
+      const count = rise[index] ?? 0
+      if (count > 0) add(task.key, 'agent', count)
     }
   }
   const main = by !== null && by.agent === null
   tasks.forEach((task, index) => {
-    if (index === own || rise[index] === 0) return
+    const count = rise[index] ?? 0
+    if (index === own || count === 0) return
     const agent = marks[task.key]?.agent ?? null
     const onIt = agent === null ? undefined : agents.find(each => each.id === agent)
-    if (!main && onIt && onIt.endedAt === null) add(task.key, 'agent', rise[index])
-    else add(task.key, agent === null ? 'main' : 'fix', rise[index])
+    if (!main && onIt && onIt.endedAt === null) add(task.key, 'agent', count)
+    else add(task.key, agent === null ? 'main' : 'fix', count)
   })
   return { ...state, unread: false, tasks, marks, agents }
 }

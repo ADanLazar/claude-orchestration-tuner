@@ -49,7 +49,7 @@ test('boxes before the first heading make one task named after the file', () => 
   const tasks = readPlan('- [ ] a\n- [x] b\n\n# Later\n- [ ] c', 'todo.md')
 
   expect(tasks[0]).toEqual({ key: 'todo.md', name: 'todo.md', number: null, title: 'todo.md', from: -1, to: 2, steps: [false, true] })
-  expect(tasks[1].name).toBe('Later')
+  expect(tasks[1]!.name).toBe('Later')
   expect(tasks.length).toBe(2)
 })
 
@@ -64,7 +64,7 @@ test('two tasks with the same heading get different keys', () => {
 test('closing #s are dropped and the number is read', () => {
   const [task] = readPlan('## Task 3 - Ship it ##\n- [ ] a', 'plan.md')
 
-  expect([task.name, task.number, task.title]).toEqual(['Task 3 - Ship it', 3, 'Ship it'])
+  expect([task!.name, task!.number, task!.title]).toEqual(['Task 3 - Ship it', 3, 'Ship it'])
 })
 
 test('an empty file and a file with no box give no task', () => {

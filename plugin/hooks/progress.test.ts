@@ -60,8 +60,8 @@ test('tracking the same plan again keeps what is known; another plan replaces it
   state = agentStarted(state, executor('a1', 'Do Task 2 of the plan'), 1000)
 
   const again = track(state, PATH, 'export.md', tasks('x  ', '    ', '  '))
-  expect(again.marks[K2].agent).toBe('a1')
-  expect(again.tasks[0].steps).toEqual([true, false, false])
+  expect(again.marks[K2]!.agent).toBe('a1')
+  expect(again.tasks[0]!.steps).toEqual([true, false, false])
   expect(again.marks[K1]).toBe(undefined)
   expect(again.tracker?.id).toBe('PROJ-12')
 
@@ -75,8 +75,8 @@ test('tracking the same plan again keeps what is known; another plan replaces it
 test('Task N in a ticking persona\'s prompt links it', () => {
   const state = agentStarted(tracked(), executor('a1', 'Do Task 2 of the plan'), 1000)
   expect(stateOf(state, K2)).toBe('running')
-  expect(state.marks[K2].agent).toBe('a1')
-  expect(state.marks[K2].startedAt).toBe(1000)
+  expect(state.marks[K2]!.agent).toBe('a1')
+  expect(state.marks[K2]!.startedAt).toBe(1000)
   expect(isRunning(state)).toBe(true)
 
   const both = agentStarted(tracked(), executor('a2', 'Do Task 1 and Task 2'), 1000)
@@ -90,19 +90,36 @@ test('Task N in a ticking persona\'s prompt links it', () => {
   expect(isRunning(ended)).toBe(false)
   const again = agentStarted(ended, executor('a1', 'Go on'), 3000)
   expect(again.agents.length).toBe(1)
-  expect(again.agents[0].endedAt).toBe(null)
-  expect(again.agents[0].ended).toBe(null)
+  expect(again.agents[0]!.endedAt).toBe(null)
+  expect(again.agents[0]!.ended).toBe(null)
   expect(stateOf(again, K2)).toBe('running')
+})
+
+test('an agent that ran, ended and runs again has a running clock', () => {
+  const started = agentStarted(tracked(), executor('a1', 'Do Task 1'), 1000)
+  const ended = agentEnded(started, 'a1', 'completed', 5000)
+  expect(ended.marks[K1]!.stoppedAt).toBe(5000)
+
+  const again = agentStarted(ended, executor('a1', 'Go on'), 9000)
+  expect(again.marks[K1]!.stoppedAt).toBe(null)
+  expect(again.marks[K1]!.startedAt).toBe(1000)
+  expect(stateOf(again, K1)).toBe('running')
+
+  const edited = observe(ended, tasks('x  ', '    ', '  '), { agent: 'a1', task: 0 }, 9000)
+  expect(edited.marks[K1]!.stoppedAt).toBe(null)
+  expect(edited.marks[K1]!.startedAt).toBe(1000)
+  expect(stateOf(edited, K1)).toBe('running')
+  expect(edited.marks[K1]!.ticks).toEqual([{ at: 9000, kind: 'agent' }])
 })
 
 test('a tick by an agent links it to that task, and that wins', () => {
   let state = agentStarted(tracked(), executor('a1', 'Do Task 1'), 1000)
   state = observe(state, tasks('   ', 'x   ', '  '), { agent: 'a1', task: 1 }, 2000)
 
-  expect(state.marks[K2].agent).toBe('a1')
-  expect(state.marks[K2].ticks).toEqual([{ at: 2000, kind: 'agent' }])
-  expect(state.marks[K1].agent).toBe(null)
-  expect(state.marks[K1].stoppedAt).toBe(1000)
+  expect(state.marks[K2]!.agent).toBe('a1')
+  expect(state.marks[K2]!.ticks).toEqual([{ at: 2000, kind: 'agent' }])
+  expect(state.marks[K1]!.agent).toBe(null)
+  expect(state.marks[K1]!.stoppedAt).toBe(1000)
   expect(states(state)).toEqual(['waiting', 'running', 'waiting'])
 })
 
@@ -112,7 +129,7 @@ test('how the agent ended decides the state', () => {
   expect(stateOf(agentEnded(started, 'a1', 'completed', 2000), K2)).toBe('to check')
   expect(stateOf(agentEnded(started, 'a1', 'failed', 2000), K2)).toBe('stopped')
   expect(stateOf(agentEnded(started, 'a1', 'stopped', 2000), K2)).toBe('stopped')
-  expect(agentEnded(started, 'a1', 'completed', 2000).marks[K2].stoppedAt).toBe(2000)
+  expect(agentEnded(started, 'a1', 'completed', 2000).marks[K2]!.stoppedAt).toBe(2000)
 
   const ticked = observe(started, tasks('   ', 'xxxx', '  '), { agent: 'a1', task: 1 }, 1500)
   for (const how of ['completed', 'failed', 'stopped'] as const) {
@@ -128,7 +145,7 @@ test('to check clears when every box is ticked or another agent is linked', () =
 
   const fixed = observe(state, tasks('   ', 'xxxx', '  '), { agent: null, task: 1 }, 3000)
   expect(stateOf(fixed, K2)).toBe('done')
-  expect(fixed.marks[K2].ticks.map(tick => tick.kind)).toEqual(['agent', 'agent', 'fix', 'fix'])
+  expect(fixed.marks[K2]!.ticks.map(tick => tick.kind)).toEqual(['agent', 'agent', 'fix', 'fix'])
 
   const second = agentStarted(state, executor('a2', 'Do Task 2 again'), 4000)
   expect(stateOf(second, K2)).toBe('running')
@@ -141,18 +158,18 @@ test('a task the main conversation works itself', () => {
   expect(state.marks[K1]).toEqual({ agent: null, startedAt: 5000, stoppedAt: 5000, ticks: [{ at: 5000, kind: 'main' }] })
 
   state = observe(state, tasks('xx ', '    ', '  '), { agent: null, task: 0 }, 65000)
-  expect(state.marks[K1].startedAt).toBe(5000)
-  expect(state.marks[K1].stoppedAt).toBe(65000)
-  expect(state.marks[K1].ticks.length).toBe(2)
+  expect(state.marks[K1]!.startedAt).toBe(5000)
+  expect(state.marks[K1]!.stoppedAt).toBe(65000)
+  expect(state.marks[K1]!.ticks.length).toBe(2)
 })
 
 test('a tick nobody\'s edit explains', () => {
   const started = agentStarted(tracked(), executor('a1', 'Do Task 2'), 1000)
   const state = observe(started, tasks('x  ', 'x   ', '  '), null, 2000)
 
-  expect(state.marks[K2].ticks).toEqual([{ at: 2000, kind: 'agent' }])
-  expect(state.marks[K1].ticks).toEqual([{ at: 2000, kind: 'main' }])
-  expect(state.marks[K1].agent).toBe(null)
+  expect(state.marks[K2]!.ticks).toEqual([{ at: 2000, kind: 'agent' }])
+  expect(state.marks[K1]!.ticks).toEqual([{ at: 2000, kind: 'main' }])
+  expect(state.marks[K1]!.agent).toBe(null)
 })
 
 test('two agents tick between two reads', () => {
@@ -160,17 +177,17 @@ test('two agents tick between two reads', () => {
   state = agentStarted(state, executor('B', 'Do Task 2'), 1000)
   state = observe(state, tasks('x  ', 'x   ', '  '), { agent: 'A', task: 0 }, 2000)
 
-  expect(state.marks[K1].agent).toBe('A')
-  expect(state.marks[K1].ticks).toEqual([{ at: 2000, kind: 'agent' }])
-  expect(state.marks[K2].agent).toBe('B')
-  expect(state.marks[K2].ticks).toEqual([{ at: 2000, kind: 'agent' }])
+  expect(state.marks[K1]!.agent).toBe('A')
+  expect(state.marks[K1]!.ticks).toEqual([{ at: 2000, kind: 'agent' }])
+  expect(state.marks[K2]!.agent).toBe('B')
+  expect(state.marks[K2]!.ticks).toEqual([{ at: 2000, kind: 'agent' }])
 })
 
 test('the plan changes while it is tracked', () => {
   let state = agentStarted(tracked(), executor('A', 'Do Task 1'), 1000)
   state = agentStarted(state, executor('B', 'Do Task 2'), 1100)
   state = observe(state, tasks('x  ', '    ', '  '), { agent: 'A', task: 0 }, 2000)
-  const before = state.marks[K1].ticks.length
+  const before = state.marks[K1]!.ticks.length
 
   const changed = readPlan(
     [
@@ -195,11 +212,11 @@ test('the plan changes while it is tracked', () => {
     after = observe(state, changed, null, 3000)
   }).not.toThrow()
 
-  expect(after.marks[K1].agent).toBe('A')
-  expect(after.marks[K1].startedAt).toBe(1000)
-  expect(after.marks[K1].ticks.length).toBe(before)
-  expect(after.marks[K2].agent).toBe('B')
-  expect(after.marks[K2].startedAt).toBe(1100)
+  expect(after.marks[K1]!.agent).toBe('A')
+  expect(after.marks[K1]!.startedAt).toBe(1000)
+  expect(after.marks[K1]!.ticks.length).toBe(before)
+  expect(after.marks[K2]!.agent).toBe('B')
+  expect(after.marks[K2]!.startedAt).toBe(1100)
   expect(after.marks['Task 3: Tests and checks']).toBe(undefined)
   expect(after.marks[K3]).toBe(undefined)
   expect(after.tasks.length).toBe(4)

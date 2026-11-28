@@ -49,18 +49,18 @@ export function readPlan(text: string, fileName: string): Task[] {
   lines.forEach((line, index) => {
     if (fence !== null) {
       const trimmed = line.trim()
-      if (trimmed.length >= fence.length && trimmed === fence[0].repeat(trimmed.length)) fence = null
+      if (trimmed.length >= fence.length && trimmed === fence.charAt(0).repeat(trimmed.length)) fence = null
       return
     }
     const opening = FENCE.exec(line)
     if (opening) {
-      fence = opening[1]
+      fence = opening[1] ?? null
       return
     }
     const heading = HEADING.exec(line)
     if (heading) {
       // Closing #s, after a space, are not part of the text.
-      const name = heading[1].replace(/(?:^|\s)#+\s*$/, '').trim()
+      const name = (heading[1] ?? '').replace(/(?:^|\s)#+\s*$/, '').trim()
       close(index - 1)
       current = { name, from: index, to: -1, steps: [] }
       return
@@ -92,13 +92,13 @@ export function linkByPrompt(tasks: Task[], prompt: string): number | null {
     return index < 0 ? null : index
   }
   const named = tasks.flatMap((task, index) => (task.name !== '' && prompt.includes(task.name) ? [index] : []))
-  return named.length === 1 ? named[0] : null
+  return named.length === 1 ? (named[0] ?? null) : null
 }
 
 export function mdPaths(prompt: string): string[] {
   const found: string[] = []
   for (const match of prompt.matchAll(/`([^`]+)`|"([^"]+)"|(\S+)/g)) {
-    const path = (match[1] ?? match[2] ?? match[3]).replace(/[.,;:!?)\]}>'"`]+$/, '')
+    const path = (match[1] ?? match[2] ?? match[3] ?? '').replace(/[.,;:!?)\]}>'"`]+$/, '')
     if (path.endsWith('.md') && !found.includes(path)) found.push(path)
   }
   return found
